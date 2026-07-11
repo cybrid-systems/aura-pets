@@ -1,0 +1,41 @@
+; examples/smoke.aura — Stage 0 smoke test
+;
+; Verifies:
+;   - pet-lifecycle stdlib loads
+;   - pet:make creates a pet record
+;   - pet:evolve! returns an updated record with version + history growing
+;   - pet:render-sync! compiles
+
+; Aura stdlib is at AURA_STDLIB_DIR (set by run.sh).
+; pet-lifecycle lives in this repo (aura-pets).
+
+(load "/home/dev/code/aura-pets/lib/pet-lifecycle.aura")
+
+; Create a pet
+(define my-pet (pet:make "mochi" "cat" "/tmp/cat-brain.aura" "cat-idle"))
+
+; Show its initial state
+(display (string-append "INIT version=" (number->string (pet:version my-pet))))
+(newline)
+(display (string-append "INIT species=" (pet:species my-pet)))
+(newline)
+(display (string-append "INIT sprite-id=" (pet:sprite-id my-pet)))
+(newline)
+(display (string-append "INIT history-len=" (number->string (length (pet:history my-pet)))))
+(newline)
+
+; Evolve it once
+(define evolved (pet:evolve! my-pet "/tmp/cat-brain-v2.aura" "happy feeding"))
+(display (string-append "EVOLVED version=" (number->string (pet:version evolved))))
+(newline)
+(display (string-append "EVOLVED sprite-id=" (pet:sprite-id evolved)))
+(newline)
+(display (string-append "EVOLVED history-len=" (number->string (length (pet:history evolved)))))
+(newline)
+
+; Render sync (Stage 0 stub returns #t)
+(display (string-append "SYNC=" (if (pet:render-sync!) "ok" "fail")))
+(newline)
+
+(display "DONE")
+(newline)
