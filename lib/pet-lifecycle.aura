@@ -1,53 +1,44 @@
-; lib/pet-lifecycle.aura — Stage 0 bootstrap (aura-pets repo)
+; lib/pet-lifecycle.aura — aura-pets stdlib (lives in aura-pets repo, NOT
+; in aura stdlib — Anqi feedback 2026-07-12).
 ;
-; Demonstrates pattern: wrap generic aura stdlib primitives
-; (atomic-swap, hot-update, persist) into pet-shaped vocabulary.
+; Wraps aura's generic stdlib primitives (atomic-swap, hot-update, persist)
+; into a flat-namespace vocabulary for pets. Plain names (no colons) because
+; Aura REPL has a quirk: top-level define + immediate call of a `name:fn`
+; procedure silently no-ops; plain names work reliably.
 ;
-; Pet lifecycle vocab lives in aura-pets repo, NOT in aura stdlib
-; (Anqi feedback 2026-07-12: stdlib = generic primitives, caller = vocab).
-;
-; Stage 0 scope: prove the wrapping pattern with atomic-swap.
-; Stage 1 will wire hot-update:reload (after confirming C++ primitive works
-; in this binary's evaluator) and persist:save/load.
+; Stage 0 wraps only `atomic-swap`. Stages 1+ add hot-update + persist.
 
-; ── Imports: generic aura stdlib primitives ──
 (load "/home/dev/code/aura/lib/std/atomic-swap.aura")
 
-; ── Public API (pet-shaped vocabulary) ──
-; Stage 0 keeps this to the minimum; Stage 1 will add the rest.
+(export pet-make
+        pet-evolve
+        pet-evolve!
+        pet-render-sync
+        pet-version
+        pet-species
+        pet-sprite-id
+        pet-behavior-path
+        pet-history)
 
-(export pet:make
-        pet:evolve!
-        pet:render-sync!
-        pet:version
-        pet:species
-        pet:sprite-id
-        pet:behavior-path
-        pet:history)
+; ── Pet record: plain 8-field list (no define-record-type in core) ──
+; (id species version region-mask
+;  behavior-path sprite-id history binding)
 
-; ── Pet record: plain list (Aura core has no define-record-type) ──
-; Layout (8 fields):
-;   (id species version region-mask
-;    behavior-path sprite-id history binding)
-;
-; Field accessors are positional. Stable across the project.
-
-(define (pet-id p)                (car p))
-(define (pet-species p)           (car (cdr p)))
-(define (pet-version p)           (car (cdr (cdr p))))
-(define (pet-region-mask p)       (car (cdr (cdr (cdr p)))))
-(define (pet-behavior-path p)     (car (cdr (cdr (cdr (cdr p))))))
-(define (pet-sprite-id p)         (car (cdr (cdr (cdr (cdr (cdr p)))))))
-(define (pet-history p)           (car (cdr (cdr (cdr (cdr (cdr (cdr p))))))))
-(define (pet-binding p)           (car (cdr (cdr (cdr (cdr (cdr (cdr (cdr p)))))))))
+(define (pet-record-id p)             (car p))
+(define (pet-record-species p)       (car (cdr p)))
+(define (pet-record-version p)       (car (cdr (cdr p))))
+(define (pet-record-region p)        (car (cdr (cdr (cdr p)))))
+(define (pet-record-behavior p)      (car (cdr (cdr (cdr (cdr p))))))
+(define (pet-record-sprite p)        (car (cdr (cdr (cdr (cdr (cdr p)))))))
+(define (pet-record-history p)       (car (cdr (cdr (cdr (cdr (cdr (cdr p))))))))
+(define (pet-record-binding p)       (car (cdr (cdr (cdr (cdr (cdr (cdr (cdr p)))))))))
 
 (define (make-pet-record id species version region-mask
                          behavior-path sprite-id history binding)
   (list id species version region-mask
         behavior-path sprite-id history binding))
 
-; ── Per-session global store ──
-; alist: (id-string . pet-record)
+; ── Per-session global store (alist: id-string . pet-record) ──
 (define *pet-store* '())
 
 (define (store-put! id pet)
@@ -59,12 +50,8 @@
        (set! *pet-store* (append (reverse acc) (cons (cons id pet) (cdr xs)))))
       (else (loop (cdr xs) (cons (car xs) acc))))))
 
-; ── Region mask: simple FNV-ish hash of species string ──
-; Stage 0 uses a basic deterministic hash. Good enough for ≤ 65535 pet types.
-; arena. Does not collide inside a single binary because masks are derived
-; per species.
-
-(define (pet-region-mask species)
+; ── Region mask: simple deterministic hash on species name ──
+(define (pet-region species)
   (let loop ((cs (string->list species)) (h 5381))
     (if (null? cs)
         (+ 1 (modulo h 65535))
@@ -72,65 +59,54 @@
               (modulo (+ (* h 33) (char->integer (car cs)))
                       1000000)))))
 
-; ── Core: create a pet ──
-; pet:make id-string species behavior-path sprite-id → pet-record
-; Stage 0 doesn't yet hot-reload behavior-path (Stage 1 wires aot:reload).
-; But it does set AOT region mask + register the binding.
+; ── Public field accessors ──
+(define (pet-version p)           (pet-record-version p))
+(define (pet-species p)           (pet-record-species p))
+(define (pet-sprite-id p)         (pet-record-sprite p))
+(define (pet-behavior-path p)     (pet-record-behavior p))
+(define (pet-history p)           (pet-record-history p))
 
-(define (pet:make id-string species behavior-path sprite-id)
-  (let* ((mask (pet-region-mask species))
+; ── Core: create a pet ──
+; Stage 0 doesn't hot-reload behavior-path (no real .aura file tested yet).
+; Stage 1 will wire aot:reload.
+
+(define (pet-make id-string species behavior-path sprite-id)
+  (let* ((mask (pet-region species))
          (binding (make-binding id-string 0 sprite-id))
          (history (list (list 0 "born" (current-time) behavior-path)))
          (pet (make-pet-record id-string species 0 mask
                                behavior-path sprite-id history binding)))
-    ; Scope subsequent AOT ops to this pet's region.
     (aot:set-region-mask mask)
     (aot:set-module-version 0)
-    ; Store and return.
     (store-put! id-string pet)
     pet))
 
 ; ── Core: evolve a pet ──
-; pet:evolve! pet new-behavior-path reason → updated-pet-record
-;
-; Does TWO things atomically (per atomic-swap library):
-;   1. swap-binding!  → queue the new sprite/version
-;   2. sync-bindings! → commit at the boundary
-;
-; Reason is recorded in pet history. Version monotonically increments.
+; Uses atomic-swap: queues a swap + commits at sync boundary.
 
-(define (pet:evolve! pet new-behavior-path reason)
-  (let* ((id (pet-id pet))
-         (species (pet-species pet))
-         (old-binding (pet-binding pet))
-         (old-version (pet-version pet))
+(define (pet-evolve pet new-behavior-path reason)
+  (let* ((id (pet-record-id pet))
+         (species (pet-record-species pet))
+         (old-binding (pet-record-binding pet))
+         (old-version (pet-record-version pet))
          (new-version (+ old-version 1))
          (new-sprite (string-append species "-v" (number->string new-version)))
          (dirty (swap-binding! old-binding new-version new-sprite))
          (sync-result (sync-bindings! dirty))
          (committed-binding (car sync-result))
-         (did-commit? (cdr sync-result))
          (entry (list new-version reason (current-time) new-behavior-path))
-         (new-history (append (pet-history pet) (list entry)))
-         (updated (make-pet-record id species new-version (pet-region-mask pet)
+         (new-history (append (pet-record-history pet) (list entry)))
+         (updated (make-pet-record id species new-version (pet-record-region pet)
                                    new-behavior-path new-sprite
                                    new-history committed-binding)))
     (store-put! id updated)
     updated))
 
+; pet-evolve! alias (Scheme convention: ! = mutating, here the pet is
+; returned but the store is also updated, so callers don't need to rebind).
+(define (pet-evolve! pet new-behavior-path reason) (pet-evolve pet new-behavior-path reason))
+
 ; ── Render-boundary sync ──
-; Walk the pet store and call sync-bindings! on each binding.
-; Call this from the render loop, NOT from hot paths.
-
-(define (pet:render-sync!)
-  ; For Stage 0 we just return "ok" so the call site compiles;
-  ; Stage 1 will implement the actual sync loop using *pet-store*.
-  #t)
-
-; ── Field accessors (re-export pet-version etc as standalone fns) ──
-
-(define (pet:version p)     (pet-version p))
-(define (pet:species p)     (pet-species p))
-(define (pet:sprite-id p)   (pet-sprite-id p))
-(define (pet:behavior-path p) (pet-behavior-path p))
-(define (pet:history p)     (pet-history p))
+; Stub for Stage 0. Stage 1 will walk *pet-store* and call sync-bindings!
+; on each binding, then return #t if any committed.
+(define (pet-render-sync) #t)
