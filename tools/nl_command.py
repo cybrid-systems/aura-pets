@@ -76,9 +76,11 @@ Rules:
 - Kid-safe. Player may write Chinese or English — understand both.
 - say/teach speech may be Chinese or English (max lengths still apply).
 - NPC Name: short ASCII only (max 10 letters). Speech max 28 chars.
-- HARD LIMITS (engine crash if exceeded): at most 5 npc lines, at most 10 prop lines.
-- If they ask for new place/background/scene/world/NPCs/props/colors: emit theme + colors + npc_clear + 3-5 npc + prop_clear + 4-10 prop. x in [2,COLS-4], y in [4,ROWS-7].
-- Never emit x >= COLS or y >= ROWS. Never invent 20+ NPCs.
+- Prefer a LIVELY crowd: 12 to 20 npc lines + 16 to 28 prop lines when regenerating a full world.
+- HARD LIMITS (clamp, do not exceed): max 24 npc lines, max 32 prop lines.
+- If they ask for new place/background/scene/world/NPCs/props/colors: emit theme + colors + npc_clear + many npcs + prop_clear + many props (cover). x in [2,COLS-4], y in [4,ROWS-7].
+- Spread NPCs across the map (not one corner). Mix friend + decor kinds.
+- Never emit x >= COLS or y >= ROWS.
 - If they only want to change what the pet says for an action: emit teach: lines (+ aura:commit).
 - Prefer aura:commit after any teach.
 - If unclear: emit help: and a short say:
@@ -329,8 +331,8 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
     has_useful = False
     npc_n = 0
     prop_n = 0
-    max_npc = 5
-    max_prop = 10
+    max_npc = 24
+    max_prop = 32
     x_hi = max(3, cols - 4)
     y_hi = max(5, rows - 7)
     for raw in text.splitlines():

@@ -52,34 +52,55 @@ def load_api_key() -> str | None:
 
 
 def offline_world(cols: int, rows: int) -> str:
-    """Cute default park scene — no network."""
+    """Dense default park — many NPCs/props for eDSL demos (no network)."""
     floor_y = max(8, rows - 6)
-    return "\n".join(
-        [
-            "theme:Sunset Meadow",
-            "sky:30,50,90",
-            "sky2:45,70,110",
-            "floor:55,110,65",
-            "floor2:40,90,50",
-            "star:230,235,255",
-            f"npc:Bunny|{max(8, cols // 5)}|{floor_y - 3}|friend|Hi! Want to play?",
-            f"npc:Bird|{min(cols - 8, cols * 2 // 3)}|{max(4, rows // 5)}|friend|Chirp! Nice day!",
-            f"npc:Frog|{min(cols - 10, cols // 2)}|{floor_y - 2}|friend|Ribbit~",
-            f"prop:tree|{cols // 3}|{floor_y - 1}",
-            f"prop:tree|{cols * 2 // 3}|{floor_y - 1}",
-            f"prop:flower|{cols // 4}|{floor_y}",
-            f"prop:flower|{cols // 2 + 3}|{floor_y}",
-            f"prop:flower|{cols * 3 // 4}|{floor_y}",
-            f"prop:crate|{cols // 5}|{floor_y - 2}",
-            f"prop:crate|{cols * 3 // 5}|{floor_y - 1}",
-            f"prop:wall|{cols // 2}|{floor_y - 3}",
-            f"prop:wall|{cols * 4 // 5}|{floor_y - 2}",
-            f"prop:bush|{cols // 3 + 4}|{floor_y}",
-            f"prop:bush|{cols * 2 // 3 - 3}|{floor_y - 1}",
-            f"prop:rock|{cols // 2 + 8}|{floor_y}",
-            "",
-        ]
-    )
+    names = [
+        ("Bunny", "friend", "Hi! Want to play?"),
+        ("Bird", "friend", "Chirp! Nice day!"),
+        ("Frog", "friend", "Ribbit~"),
+        ("Fox", "friend", "Sly hi!"),
+        ("Owl", "friend", "Hoo there!"),
+        ("Bear", "friend", "Hug?"),
+        ("Duck", "friend", "Quack!"),
+        ("Cat", "friend", "Meow~"),
+        ("Pup", "friend", "Woof!"),
+        ("Deer", "friend", "Soft step."),
+        ("Pip", "decor", "Spark!"),
+        ("Dot", "decor", "Boop!"),
+        ("Bean", "decor", "Tiny!"),
+        ("Moth", "decor", "Flutter"),
+        ("Bug", "decor", "Crawl"),
+        ("Star", "decor", "Twinkle"),
+        ("Mint", "decor", "Fresh!"),
+        ("Coco", "friend", "Hello!"),
+        ("Lark", "friend", "Sing!"),
+        ("Moss", "decor", "Green!"),
+    ]
+    lines = [
+        "theme:Sunset Meadow",
+        "sky:30,50,90",
+        "sky2:45,70,110",
+        "floor:55,110,65",
+        "floor2:40,90,50",
+        "star:230,235,255",
+    ]
+    x_span = max(8, cols - 8)
+    y_span = max(4, floor_y - 6)
+    for i, (name, kind, speech) in enumerate(names):
+        x = 4 + (i * 5) % x_span
+        y = 5 + (i * 3) % y_span
+        lines.append(f"npc:{name}|{x}|{y}|{kind}|{speech}")
+    prop_kinds = [
+        "tree", "tree", "tree", "flower", "flower", "flower", "flower",
+        "crate", "crate", "crate", "wall", "wall", "wall",
+        "bush", "bush", "bush", "rock", "rock", "crate", "bush",
+    ]
+    for i, kind in enumerate(prop_kinds):
+        x = 3 + (i * 7) % max(6, cols - 6)
+        y = max(5, floor_y - (i % 4))
+        lines.append(f"prop:{kind}|{x}|{y}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 SYSTEM = """You design cute kid-safe virtual pet game worlds for a terminal pixel game.
@@ -94,10 +115,10 @@ npc:<Name>|<x>|<y>|<kind>|<short speech>
 prop:<kind>|<x>|<y>
 
 Rules:
-- 3 to 5 npc lines. kind is friend or decor.
+- Prefer a lively world: 12 to 20 npc lines (kind friend or decor). Hard max 24.
 - Name and speech ASCII only, speech max 28 chars, kid-friendly, no violence.
-- 6 to 12 prop lines for cover. kind is tree|flower|rock|crate|wall|bush.
-- Scatter crates/walls/bushes as random cover (tank peek spots), not only decorative.
+- 16 to 28 prop lines for cover. kind is tree|flower|rock|crate|wall|bush. Hard max 32.
+- Scatter NPCs across the whole map; mix animals. Scatter crates/walls/bushes as cover.
 - x in [2, COLS-4], y in [4, ROWS-7]. Keep NPCs above the floor band.
 - Colors are 0-255 RGB integers for a soft pleasant palette.
 - Do not invent other line types.
@@ -108,7 +129,8 @@ def call_minimax(key: str, cols: int, rows: int) -> str:
     url = f"{API_BASE.rstrip('/')}/chat/completions"
     user = (
         f"Terminal size COLS={cols} ROWS={rows}. "
-        "Create a cheerful park or backyard world with friendly animal NPCs."
+        "Create a cheerful crowded park: about 16 animal NPCs and 20 cover props "
+        "(crates/walls/bushes), spread across the whole map."
     )
     body = {
         "model": MODEL,
