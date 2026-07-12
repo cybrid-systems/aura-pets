@@ -269,11 +269,6 @@
         #t)
       #t)))
 
-(define (walk-momentum-tick!)
-  ; reset per-frame move gate for next frame
-  (set! *moved-this-frame* #f)
-  #t)
-
 ; ~60Hz poll; drain a few events so OS key-repeat feels continuous.
 (define (play-drain-input!)
   (set! *moved-this-frame* #f)
