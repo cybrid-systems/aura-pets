@@ -239,6 +239,8 @@
           (if (and running (= (modulo tick-n 45) 0))
               (set! pet (game-soft-tick pet))
             #t)
-          (iter)))))
+          (iter))))))
+
+; Top-level entry used by run.sh (must stay outside cat-demo-interactive).
 (define (play-entry)
   (cat-demo-interactive))
