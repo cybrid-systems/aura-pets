@@ -111,7 +111,7 @@
      (cons #f pet))
 
     ((or (string=? cmd "help") (string=? cmd "?"))
-     (set! *speech* "Type words: snowy park / teach feed Hi / brain")
+     (set! *speech* "Try /help  /grow /fight /eat /back")
      (set! *last-act* "help")
      (cons #t pet))
 

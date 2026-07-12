@@ -42,8 +42,10 @@
       0
     (modulo *anim-t* 4)))
 
-; Vertical hop offset for play / evolve juice.
+; Vertical hop offset for play / evolve / fight juice.
 (define (anim-hop)
-  (if (or (string=? *anim-kind* "play") (string=? *anim-kind* "evolve"))
+  (if (or (string=? *anim-kind* "play")
+          (string=? *anim-kind* "evolve")
+          (string=? *anim-kind* "fight"))
       (if (= (modulo *anim-t* 2) 0) -1 0)
     0))

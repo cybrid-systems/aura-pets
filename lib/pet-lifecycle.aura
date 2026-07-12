@@ -95,6 +95,74 @@
 (define (pet-evolve! pet new-behavior-path reason)
   (pet-evolve pet new-behavior-path reason))
 
+; ── Morph forms (version 0..4) with undo stack for /back ──
+(define *morph-stack* '())
+(define *morph-max* 4)
+
+(define (morph-reset!)
+  (set! *morph-stack* '())
+  #t)
+
+(define (morph-stack) *morph-stack*)
+
+; Form display names (kids-friendly).
+(define (pet-form-name version)
+  (cond
+    ((= version 0) "Kitten")
+    ((= version 1) "Pink Cat")
+    ((= version 2) "Tiger")
+    ((= version 3) "Shadow")
+    ((= version 4) "Dragon Cat")
+    (else (string-append "Form" (number->string version)))))
+
+; Rebuild pet record at a specific version (visual morph, keeps vitals).
+(define (pet-set-version pet new-version reason)
+  (let* ((id (pet-field pet 0))
+         (species (pet-field pet 1))
+         (old-binding (pet-field pet 7))
+         (nv (if (< new-version 0) 0
+               (if (> new-version *morph-max*) *morph-max* new-version)))
+         (new-sprite (string-append species "-v" (number->string nv)))
+         (dirty (swap-binding! old-binding nv new-sprite))
+         (sync-result (sync-bindings! dirty))
+         (committed-binding (car sync-result))
+         (entry (list nv reason 0 (pet-behavior-path pet)))
+         (new-history (append (pet-history pet) (list entry)))
+         (updated (make-pet-record id species nv (pet-field pet 3)
+                                   (pet-behavior-path pet) new-sprite
+                                   new-history committed-binding
+                                   (pet-vitals pet))))
+    (store-put! id updated)
+    updated))
+
+; /grow — push current form, advance to next.
+; Returns (ok? . pet)  ok? = #t grown, #f maxed
+(define (pet-grow pet reason)
+  (let ((v (pet-version pet)))
+    (if (>= v *morph-max*)
+        (cons #f pet)
+      (begin
+        (set! *morph-stack* (cons v *morph-stack*))
+        (cons #t (pet-set-version pet (+ v 1) reason))))))
+
+; /back — pop morph stack, restore previous form.
+; Returns (ok? . pet)
+(define (pet-morph-back pet)
+  (if (null? *morph-stack*)
+      (cons #f pet)
+    (let ((prev (car *morph-stack*)))
+      (set! *morph-stack* (cdr *morph-stack*))
+      (cons #t (pet-set-version pet prev "back")))))
+
+; Combat base stats by form (max-hp . atk)
+(define (pet-form-stats version)
+  (cond
+    ((= version 0) (cons 20 3))
+    ((= version 1) (cons 28 5))
+    ((= version 2) (cons 36 7))
+    ((= version 3) (cons 44 9))
+    (else (cons 55 12))))
+
 (define (pet-feed pet)
   (let ((u (pet-with-vitals pet
              (+ (pet-hunger pet) 3)

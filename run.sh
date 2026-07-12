@@ -30,7 +30,7 @@ FRAMES=10
 MODE="auto"
 
 # pet-log before scene so play-entry can plog-*
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
 
@@ -46,13 +46,17 @@ Aura Pets
   ./run.sh smoke
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
-Play: arrows move | 1 eat 2 play 3 sleep | q bye
-      type then Enter (e/g/t are NOT hotkeys — type freely, CN ok):
-        e / grow          evolve
-        world / talk      regen / nearest NPC
-        下雪公园          NL director (async LLM)
-        教喂 好吃啦
-World/NL: MiniMax-M3 (key: ~/code/keys/minimax) → eDSL + AST hot update
+Play: arrows move | 1 2 3 care | q bye
+  Slash commands (type /… then Enter):
+    /eat /play /sleep     care
+    /grow                 next form (Kitten→…→Dragon Cat)
+    /back                 previous form
+    /form /status         show morph + HP/ATK
+    /fight                scuffle nearest NPC
+    /heal                 full HP (costs energy)
+    /talk /world /brain /help /quit
+  Also: free Chinese/English for LLM world (async)
+World/NL: MiniMax-M3 (key: ~/code/keys/minimax)
 
 Debug: every play session writes $LOG_FILE
   tail -f /tmp/aura-pets-debug.log

@@ -34,23 +34,38 @@
     (px 8 (+ y0 3) star sky)
     #t))
 
+; Form palettes: 0 Kitten, 1 Pink, 2 Tiger, 3 Shadow, 4 Dragon
+(define (cat-fur-pair version)
+  (cond
+    ((= version 0) (cons (rgb 255 186 140) (rgb 240 150 110)))
+    ((= version 1) (cons (rgb 255 140 200) (rgb 230 100 170)))
+    ((= version 2) (cons (rgb 255 170 60) (rgb 220 120 40)))
+    ((= version 3) (cons (rgb 120 90 180) (rgb 70 50 120)))
+    (else (cons (rgb 255 210 80) (rgb 255 140 40)))))
+
 ; Base head/body; pose tweaks eyes/mouth/fx.
+; pose: idle|eat|play|sleep|evolve|fight
 (define (draw-pixel-cat! col row blink? mood version pose phase)
-  (let* ((fur (if (= version 0) (rgb 255 186 140) (rgb 255 140 200)))
-         (fur2 (if (= version 0) (rgb 240 150 110) (rgb 230 100 170)))
-         (ear (rgb 255 140 160))
+  (let* ((pair (cat-fur-pair version))
+         (fur (car pair))
+         (fur2 (cdr pair))
+         (ear (if (>= version 3) (rgb 200 80 255) (rgb 255 140 160)))
          (food (rgb 255 220 80))
          (zzz (rgb 180 200 255))
          (spark (rgb 255 255 120))
+         (slash (rgb 255 80 80))
          (closed (rgb 40 36 55))
          (eye (if (or blink? (string=? pose "sleep"))
                   fur
-                (if (string=? mood "happy") (rgb 80 200 120) closed)))
+                (if (string=? pose "fight")
+                    (rgb 255 60 60)
+                  (if (string=? mood "happy") (rgb 80 200 120) closed))))
          (nose (if (string=? pose "eat") food (rgb 255 100 140)))
          (cheek (rgb 255 150 170))
          (c col)
          (r row)
-         (body-r (if (and (string=? pose "play") (= (modulo phase 2) 0))
+         (body-r (if (or (and (string=? pose "play") (= (modulo phase 2) 0))
+                         (and (string=? pose "fight") (= (modulo phase 2) 0)))
                      (- r 1)
                    r)))
     ; ears (play: perk higher)
@@ -118,5 +133,23 @@
         (begin
           (px (+ c 5) (+ body-r 5) food food)
           (px (+ c 6) (+ body-r 5) food (rgb 200 160 40)))
+      #t)
+    ; fight slash FX
+    (if (string=? pose "fight")
+        (begin
+          (px (+ c 11) (+ body-r 1) slash slash)
+          (px (+ c 12) (+ body-r 2) slash (rgb 255 200 80))
+          (px (+ c 11) (+ body-r 3) slash slash)
+          (if (>= version 4)
+              (begin
+                (px (+ c 0) body-r spark spark)
+                (px (+ c 1) (- body-r 1) spark fur))
+            #t))
+      #t)
+    ; tiger stripes
+    (if (= version 2)
+        (begin
+          (px (+ c 4) (+ body-r 4) fur2 fur2)
+          (px (+ c 7) (+ body-r 4) fur2 fur2))
       #t)
     #t))

@@ -70,7 +70,7 @@
   (set! *prompt-submit* (prompt-empty))
   (set! *prompt-hot* (prompt-empty))
   (set! *prompt-cursor* 0)
-  (set! *prompt-log* "type words (CN ok) · 123 care · e/world/talk +Enter")
+  (set! *prompt-log* "/grow /eat /fight /back /help · 123 care · CN ok")
   #t)
 
 (define (prompt-set-log! msg)

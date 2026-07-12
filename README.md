@@ -18,15 +18,27 @@ cd /path/to/aura-pets
 | **1** | Eat + eat anim |
 | **2** | Play + hop anim |
 | **3** | Sleep + Zzz anim |
-| type `e` + Enter | Grow (not a steal-hotkey — letters type normally) |
-| type `world` / `talk` | Regen world / talk NPC |
 | **q** (empty line) | Bye |
-| free text in `>` | **LLM director** (EN + 中文), async |
-| `teach feed Nom!` | Classic eDSL teach (no LLM) |
-| `brain` | Show rules |
+| `/eat` `/play` `/sleep` | Care (also `1`/`2`/`3`) |
+| `/grow` | Next form: Kitten→Pink→Tiger→Shadow→Dragon |
+| `/back` | Previous form |
+| `/form` `/status` | Morph name + HP/ATK |
+| `/fight` | Hit nearest NPC (they hit back) |
+| `/heal` | Full HP (costs energy) |
+| `/talk` `/world` `/help` | Social / regen / help |
+| free text (no `/`) | **LLM director** (EN + 中文), async |
 
-> Empty-line hotkeys are only **1/2/3** (care) and **q**.  
-> **e / g / t** are normal letters so you can type English and Chinese without fights.
+### Forms & combat
+
+| Form | HP | ATK |
+|------|----|-----|
+| Kitten | 20 | 3 |
+| Pink Cat | 28 | 5 |
+| Tiger | 36 | 7 |
+| Shadow | 44 | 9 |
+| Dragon Cat | 55 | 12 |
+
+Walk next to an NPC, type `/fight`. Fainted NPCs leave the scene. `/heal` after `/sleep` if energy is low.
 
 ### Natural language director (eDSL + AST hot update)
 

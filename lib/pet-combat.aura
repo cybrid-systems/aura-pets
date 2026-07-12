@@ -1,0 +1,165 @@
+; lib/pet-combat.aura — pet vs NPC scuffles (kids-safe HP fight).
+;
+; Pet: *combat-hp* / max from form. NPC: hp stored beside world list.
+; (combat-reset! pet) (combat-status pet)
+; (combat-fight! pet px py) → speech string, mutates pet vitals lightly
+; (combat-heal! pet) (combat-npc-hp name)
+
+(define *combat-hp* 20)
+(define *combat-max* 20)
+(define *combat-atk* 3)
+(define *combat-last-target* "")
+; Alist (name . hp) for NPCs damaged this session
+(define *npc-hp* '())
+
+(define (combat-reset! pet)
+  (let ((st (pet-form-stats (pet-version pet))))
+    (set! *combat-max* (car st))
+    (set! *combat-atk* (cdr st))
+    (set! *combat-hp* *combat-max*)
+    (set! *combat-last-target* "")
+    (set! *npc-hp* '())
+    #t))
+
+(define (combat-sync-form! pet)
+  (let* ((st (pet-form-stats (pet-version pet)))
+         (nm (car st))
+         (na (cdr st))
+         (ratio (if (<= *combat-max* 0) 1
+                  (quotient (* *combat-hp* 100) *combat-max*))))
+    (set! *combat-max* nm)
+    (set! *combat-atk* na)
+    ; keep roughly same % HP after morph
+    (set! *combat-hp*
+      (let ((h (quotient (* nm ratio) 100)))
+        (if (< h 1) 1 (if (> h nm) nm h))))
+    #t))
+
+(define (combat-hp) *combat-hp*)
+(define (combat-max) *combat-max*)
+(define (combat-atk) *combat-atk*)
+
+(define (combat-status pet)
+  (string-append
+    (pet-form-name (pet-version pet))
+    " HP" (number->string *combat-hp*) "/" (number->string *combat-max*)
+    " ATK" (number->string *combat-atk*)))
+
+; Lookup / default NPC combat HP (friends 12, decor 8)
+(define (combat-npc-max kind)
+  (if (string=? kind "friend") 12 8))
+
+(define (combat-npc-atk kind)
+  (if (string=? kind "friend") 2 1))
+
+(define (combat-npc-hp-get name kind)
+  (let loop ((xs *npc-hp*))
+    (if (null? xs)
+        (combat-npc-max kind)
+      (if (string=? (car (car xs)) name)
+          (cdr (car xs))
+        (loop (cdr xs))))))
+
+(define (combat-npc-hp-set! name hp)
+  (let loop ((xs *npc-hp*) (acc '()))
+    (cond
+      ((null? xs)
+       (set! *npc-hp* (append (reverse acc) (list (cons name hp))))
+       #t)
+      ((string=? (car (car xs)) name)
+       (set! *npc-hp* (append (reverse acc) (cons (cons name hp) (cdr xs))))
+       #t)
+      (else (loop (cdr xs) (cons (car xs) acc))))))
+
+; Nearest fightable NPC (friend or any) within manhattan d<=8.
+; Returns (name x y kind speech) or #f
+(define (combat-nearest-npc px py)
+  (let loop ((xs *world-npcs*) (best #f) (best-d 999))
+    (if (null? xs)
+        best
+      (let* ((n (car xs))
+             (name (car n))
+             (x (car (cdr n)))
+             (y (car (cdr (cdr n))))
+             (kind (car (cdr (cdr (cdr n)))))
+             (dx (if (> px x) (- px x) (- x px)))
+             (dy (if (> py y) (- py y) (- y py)))
+             (d (+ dx dy)))
+        (if (and (< d best-d) (<= d 8))
+            (loop (cdr xs) n d)
+          (loop (cdr xs) best best-d))))))
+
+; Remove NPC by name from world list (fainted).
+(define (combat-remove-npc! name)
+  (set! *world-npcs*
+    (let loop ((xs *world-npcs*) (acc '()))
+      (if (null? xs)
+          (reverse acc)
+        (if (string=? (car (car xs)) name)
+            (loop (cdr xs) acc)
+          (loop (cdr xs) (cons (car xs) acc))))))
+  #t)
+
+; Spend 1 energy if possible; returns updated pet.
+(define (combat-spend-energy pet)
+  (let ((u (pet-with-vitals pet
+             (pet-hunger pet)
+             (pet-mood pet)
+             (if (> (pet-energy pet) 1) (- (pet-energy pet) 1) 1))))
+    (store-put! (pet-id u) u)
+    u))
+
+; One fight exchange. Returns (speech . pet).
+(define (combat-fight! pet px py)
+  (if (<= *combat-hp* 0)
+      (cons "You are down! /heal first." pet)
+    (let ((npc (combat-nearest-npc px py)))
+      (if (not npc)
+          (cons "No one nearby. Walk closer to fight!" pet)
+        (let* ((name (car npc))
+               (kind (car (cdr (cdr (cdr npc)))))
+               (nhp (combat-npc-hp-get name kind))
+               (natk (combat-npc-atk kind))
+               (pdmg (if (>= (pet-version pet) 2)
+                         (+ *combat-atk* 1)
+                       *combat-atk*))
+               (new-nhp (- nhp pdmg))
+               (new-php (- *combat-hp* natk))
+               (u (combat-spend-energy pet)))
+          (set! *combat-last-target* name)
+          (anim-start! "fight" 12)
+          (if (<= new-nhp 0)
+              (begin
+                (combat-remove-npc! name)
+                (set! *combat-hp* (if (< new-php 1) 1 new-php))
+                (cons (string-append name " fainted! You win! HP"
+                                     (number->string *combat-hp*))
+                      u))
+            (begin
+              (combat-npc-hp-set! name new-nhp)
+              (set! *combat-hp* (if (< new-php 0) 0 new-php))
+              (cons (string-append
+                      "Hit " name " -" (number->string pdmg)
+                      "! Took -" (number->string natk)
+                      " HP" (number->string *combat-hp*)
+                      "/" (number->string *combat-max*))
+                    u))))))))
+
+; Returns (speech . pet)
+(define (combat-heal-pair! pet)
+  (if (>= *combat-hp* *combat-max*)
+      (cons "HP already full!" pet)
+    (if (< (pet-energy pet) 2)
+        (cons "Need energy! /sleep first." pet)
+      (begin
+        (set! *combat-hp* *combat-max*)
+        (let ((u (pet-with-vitals pet
+                   (pet-hunger pet)
+                   (+ (pet-mood pet) 1)
+                   (- (pet-energy pet) 2))))
+          (store-put! (pet-id u) u)
+          (anim-start! "sleep" 10)
+          (cons (string-append "Healed! HP"
+                               (number->string *combat-hp*))
+                u))))))
+

@@ -84,9 +84,10 @@
 (define (draw-hud! pet frame-n)
   (draw-text 1 0 "Mochi" TITLE-CYAN BG)
   (draw-text 8 0
-             (string-append (game-mood-kid pet)
+             (string-append (pet-form-name (pet-version pet))
+                            " HP" (number->string (combat-hp))
+                            "/" (number->string (combat-max))
                             " love" (game-love-stars)
-                            " v" (number->string (pet-version pet))
                             " " (anim-kind))
              MATRIX-GREEN BG)
   (draw-text 1 1 "food[" BAR-FG BG)
@@ -97,7 +98,7 @@
   (draw-text 34 1 "] zest[" BAR-FG BG)
   (draw-text 41 1 (bar (pet-energy pet)) BAR-FG BG)
   (draw-text 1 2
-             (string-append "type+Enter | 123 care q  ["
+             (string-append "/grow /fight /help | 123 q  ["
                             (world-theme) " npcs="
                             (number->string (world-npc-count))
                             (if (nl-busy?) " ...]" "]"))
@@ -142,10 +143,43 @@
     (tui:present)
     #t))
 
-; After care cmds, handle world gen / talk / free-text NL director.
+; Slash/bare commands + world/talk + free-text NL director.
 ; LLM jobs are async: start background Python, keep moving; poll in play-step!.
 (define (apply-cmd-world pet cmd)
+  (cmd-set-pos! *p-x* *p-y*)
   (cond
+    ; ── slash or known bare command (/grow /eat /fight …) ──
+    ((or (cmd-is-slash? cmd) (cmd-is-bare? cmd))
+     (let ((r (cmd-run pet cmd)))
+       (let ((act (game-last-act))
+             (u (cmd-pet r pet)))
+         ; Post-hooks for talk / world (need live coords / async)
+         (cond
+           ((string=? act "talk")
+            (let ((s (world-nearest-speech *p-x* *p-y*)))
+              (if s
+                  (begin (game-set-speech! s) (prompt-set-log! s) (plog "talk" s))
+                (begin
+                  (game-set-speech! "No one nearby. Walk closer!")
+                  (prompt-set-log! (game-speech))))
+              (cons #t u)))
+           ((string=? act "world")
+            (if (nl-busy?)
+                (begin
+                  (game-set-speech! "Still thinking... walk around!")
+                  (prompt-set-log! (game-speech))
+                  (cons #t u))
+              (begin
+                (prompt-set-log! "Building world... (async)")
+                (plog "world" "generate-async-start")
+                (nl-start-worldgen-async! W H)
+                (game-set-speech! (nl-last-say))
+                (prompt-set-log! (game-speech))
+                (cons #t u))))
+           (else
+            (prompt-set-log! (game-speech))
+            (plog "cmd" (string-append "in=" cmd " act=" act))
+            r)))))
     ((or (string=? cmd "world") (string=? cmd "gen") (string=? cmd "g"))
      (if (nl-busy?)
          (begin
@@ -211,12 +245,14 @@
   (tui:hide-cursor)
   (prompt-init! PROMPT-Y)
   (game-reset!)
+  (morph-reset!)
   ; Demo: load prebuilt world file, else offline defaults (no live API).
   (world-set-path! "/tmp/aura-pets-world.txt")
   (if (file-exists? "/tmp/aura-pets-world.txt")
       (world-load! "/tmp/aura-pets-world.txt")
     (world-reset!))
   (define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
+  (combat-reset! mochi)
   (define start-x (clamp-x (quotient W 4)))
   (define start-y (clamp-y (quotient (+ SCENE-Y0 (- SCENE-Y1 CAT-H)) 2)))
   (let loop ((i 0) (current mochi) (cat-x start-x) (cat-y start-y))
@@ -381,8 +417,11 @@
   (game-reset!)
   (prompt-set-log!
     (string-append "size " (number->string W) "x" (number->string H)
-                   " | type words to change world | 1 2 3 care | q"))
+                   " | /grow /eat /fight /back /help"))
+  (game-reset!)
+  (morph-reset!)
   (set! *p-pet* (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
+  (combat-reset! *p-pet*)
   (set! *p-frame* 0)
   (set! *p-x* (clamp-x (quotient W 4)))
   (set! *p-y* (clamp-y (quotient (+ SCENE-Y0 (- SCENE-Y1 CAT-H)) 2)))

@@ -1,0 +1,215 @@
+; lib/pet-cmd.aura — slash command system for aura-pets.
+;
+; Primary interface: type /cmd [args] then Enter.
+; Also accepts bare cmd without slash for short names.
+;
+; Returns (keep? . pet) same as game-do.
+; Fight uses player coords via (cmd-set-pos! x y) before dispatch.
+
+(define *cmd-px* 0)
+(define *cmd-py* 0)
+
+(define (cmd-set-pos! x y)
+  (set! *cmd-px* x)
+  (set! *cmd-py* y)
+  #t)
+
+; Lowercase ASCII letters in place (leave non-letters).
+(define (cmd-downcase-ascii s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (acc (substring "x" 0 0)))
+      (if (>= i n)
+          acc
+        (let* ((ch (substring s i (+ i 1)))
+               (c (char->integer (car (string->list ch))))
+               (out (if (and (>= c 65) (<= c 90))
+                        (list->string (list (integer->char (+ c 32))))
+                      ch)))
+          (loop (+ i 1) (string-append acc out)))))))
+
+; Strip leading spaces and one leading '/'.
+(define (cmd-normalize raw)
+  (let ((n (string-length raw)))
+    (let loop ((i 0))
+      (if (and (< i n) (string=? (substring raw i (+ i 1)) " "))
+          (loop (+ i 1))
+        (if (and (< i n) (string=? (substring raw i (+ i 1)) "/"))
+            (substring raw (+ i 1) n)
+          (if (>= i n)
+              (substring "x" 0 0)
+            (substring raw i n)))))))
+
+; Split first token and rest: "grow tiger" → ("grow" . "tiger")
+(define (cmd-split s)
+  (let ((n (string-length s)))
+    (let loop ((i 0))
+      (if (>= i n)
+          (cons s (substring "x" 0 0))
+        (if (string=? (substring s i (+ i 1)) " ")
+            (cons (substring s 0 i)
+                  (let skip ((j i))
+                    (if (and (< j n) (string=? (substring s j (+ j 1)) " "))
+                        (skip (+ j 1))
+                      (substring s j n))))
+          (loop (+ i 1)))))))
+
+(define (cmd-help-text)
+  (string-append
+    "/eat /play /sleep /grow /back /form "
+    "/fight /heal /status /talk /world /brain /help /quit"))
+
+; Core slash dispatcher. pet is the live pet record.
+(define (cmd-run pet raw)
+  (let* ((norm (cmd-normalize raw))
+         (parts (cmd-split norm))
+         (head (cmd-downcase-ascii (car parts)))
+         (args (cdr parts)))
+    (cond
+      ; ── meta ──
+      ((or (string=? head "help") (string=? head "h") (string=? head "?"))
+       (set! *speech* (cmd-help-text))
+       (set! *last-act* "help")
+       (cons #t pet))
+
+      ((or (string=? head "quit") (string=? head "q") (string=? head "bye")
+           (string=? head "exit"))
+       (set! *speech* "Bye-bye! Come back soon!")
+       (set! *last-act* "bye")
+       (cons #f pet))
+
+      ((or (string=? head "status") (string=? head "stats") (string=? head "info"))
+       (set! *speech*
+         (string-append
+           (combat-status pet)
+           " love" (game-love-stars)
+           " E" (number->string (pet-energy pet))))
+       (set! *last-act* "status")
+       (cons #t pet))
+
+      ((or (string=? head "form") (string=? head "morph"))
+       (set! *speech*
+         (string-append "Form: " (pet-form-name (pet-version pet))
+                        " v" (number->string (pet-version pet))))
+       (set! *last-act* "form")
+       (cons #t pet))
+
+      ((or (string=? head "brain") (string=? head "edsl"))
+       (set! *speech* (edsl-show))
+       (set! *last-act* "brain")
+       (cons #t pet))
+
+      ; ── care ──
+      ((or (string=? head "eat") (string=? head "feed") (string=? head "1")
+           (string=? head "f") (string=? head "nom"))
+       (game-apply-care pet "feed" pet-feed "eat"))
+
+      ((or (string=? head "play") (string=? head "2") (string=? head "p"))
+       (game-apply-care pet "play" pet-play "play"))
+
+      ((or (string=? head "sleep") (string=? head "zzz") (string=? head "3")
+           (string=? head "s") (string=? head "z") (string=? head "rest"))
+       (game-apply-care pet "sleep" pet-sleep "sleep"))
+
+      ; ── morph ──
+      ((or (string=? head "grow") (string=? head "evolve") (string=? head "e")
+           (string=? head "up") (string=? head "level"))
+       (let ((r (pet-grow pet "slash-grow")))
+         (if (car r)
+             (let ((u (cdr r)))
+               (combat-sync-form! u)
+               (set! *last-act* "grow")
+               (set! *speech*
+                 (string-append "Grew into " (pet-form-name (pet-version u)) "!") )
+               (anim-start! "evolve" 16)
+               (cons #t u))
+           (begin
+             (set! *speech* "Max form! Try /back")
+             (set! *last-act* "grow")
+             (cons #t pet)))))
+
+      ((or (string=? head "back") (string=? head "down") (string=? head "undo")
+           (string=? head "prev"))
+       (let ((r (pet-morph-back pet)))
+         (if (car r)
+             (let ((u (cdr r)))
+               (combat-sync-form! u)
+               (set! *last-act* "back")
+               (set! *speech*
+                 (string-append "Back to " (pet-form-name (pet-version u))))
+               (anim-start! "play" 10)
+               (cons #t u))
+           (begin
+             (set! *speech* "No previous form.")
+             (set! *last-act* "back")
+             (cons #t pet)))))
+
+      ; ── combat ──
+      ((or (string=? head "fight") (string=? head "atk") (string=? head "attack")
+           (string=? head "hit") (string=? head "battle") (string=? head "punch"))
+       (let ((r (combat-fight! pet *cmd-px* *cmd-py*)))
+         (set! *speech* (car r))
+         (set! *last-act* "fight")
+         (cons #t (cdr r))))
+
+      ((or (string=? head "heal") (string=? head "potion") (string=? head "recover"))
+       (let ((r (combat-heal-pair! pet)))
+         (set! *speech* (car r))
+         (set! *last-act* "heal")
+         (cons #t (cdr r))))
+
+      ; ── social / world ──
+      ((or (string=? head "talk") (string=? head "t") (string=? head "chat"))
+       (set! *last-act* "talk")
+       (set! *speech* "talk") ; caller replaces with nearest speech
+       (cons #t pet))
+
+      ((or (string=? head "world") (string=? head "gen") (string=? head "g")
+           (string=? head "scene"))
+       (set! *last-act* "world")
+       (set! *speech* "world")
+       (cons #t pet))
+
+      ; ── teach: /teach feed Hello ──
+      ((string=? head "teach")
+       (if (game-try-teach! (string-append "teach " args))
+           (cons #t pet)
+         (begin
+           (set! *speech* "Usage: /teach feed Hi!")
+           (cons #t pet))))
+
+      ((string=? head "say")
+       (if (= (string-length args) 0)
+           (begin (set! *speech* "Usage: /say hello") (cons #t pet))
+         (begin
+           (set! *speech* args)
+           (set! *last-act* "say")
+           (cons #t pet))))
+
+      ; unknown slash — soft hint
+      (else
+       (set! *speech* (string-append "Unknown /" head " — try /help"))
+       (set! *last-act* "idle")
+       (cons #t pet)))))
+
+; True if string is a slash command (starts with / after trim).
+(define (cmd-is-slash? raw)
+  (let ((n (string-length raw)))
+    (let loop ((i 0))
+      (if (>= i n)
+          #f
+        (if (string=? (substring raw i (+ i 1)) " ")
+            (loop (+ i 1))
+          (string=? (substring raw i (+ i 1)) "/"))))))
+
+; True if bare word is a known primary command (no slash required).
+(define (cmd-is-bare? raw)
+  (let* ((norm (cmd-normalize raw))
+         (parts (cmd-split norm))
+         (head (cmd-downcase-ascii (car parts))))
+    (or (string=? head "eat") (string=? head "feed") (string=? head "play")
+        (string=? head "sleep") (string=? head "grow") (string=? head "evolve")
+        (string=? head "back") (string=? head "fight") (string=? head "heal")
+        (string=? head "status") (string=? head "stats") (string=? head "form")
+        (string=? head "help") (string=? head "talk") (string=? head "world")
+        (string=? head "brain") (string=? head "quit") (string=? head "say")
+        (string=? head "teach") (string=? head "atk") (string=? head "attack"))))

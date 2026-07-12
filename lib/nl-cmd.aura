@@ -341,10 +341,15 @@
               (string=? cmd "?") (string=? cmd "feed") (string=? cmd "play")
               (string=? cmd "sleep") (string=? cmd "evolve") (string=? cmd "grow")
               (string=? cmd "eat") (string=? cmd "f") (string=? cmd "p")
-              (string=? cmd "s") (string=? cmd "z"))
+              (string=? cmd "s") (string=? cmd "z")
+              (string=? cmd "back") (string=? cmd "fight") (string=? cmd "heal")
+              (string=? cmd "status") (string=? cmd "form") (string=? cmd "atk"))
           #f
-        ; "teach X Y" stays on classic path
-        (if (and (>= n 6) (string=? (substring cmd 0 5) "teach")
-                 (string=? (substring cmd 5 6) " "))
+        ; slash commands never go to NL
+        (if (cmd-is-slash? cmd)
             #f
-          #t)))))
+          ; "teach X Y" stays on classic path
+          (if (and (>= n 6) (string=? (substring cmd 0 5) "teach")
+                   (string=? (substring cmd 5 6) " "))
+              #f
+            #t))))))
