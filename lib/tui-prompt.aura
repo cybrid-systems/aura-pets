@@ -250,7 +250,9 @@
 
 (define (prompt-is-hot? ch)
   (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
-      (string=? ch "e") (string=? ch "E")))
+      (string=? ch "e") (string=? ch "E")
+      (string=? ch "g") (string=? ch "G")
+      (string=? ch "t") (string=? ch "T")))
 
 ; Handle one tui:read-event. → "quit"|"submit"|"edit"|"hot"|#f
 (define (prompt-handle e)
@@ -303,7 +305,13 @@
             ((and empty? (or (string=? ch "q") (string=? ch "Q")))
              "quit")
             ((and empty? (prompt-is-hot? ch))
-             (set! *prompt-hot* (if (string=? ch "E") "e" ch))
+             ; Normalize letter hotkeys to lowercase (G→g, T→t, E→e).
+             (set! *prompt-hot*
+               (cond
+                 ((or (string=? ch "E") (string=? ch "e")) "e")
+                 ((or (string=? ch "G") (string=? ch "g")) "g")
+                 ((or (string=? ch "T") (string=? ch "t")) "t")
+                 (else ch)))
              "hot")
             ((prompt-printable? ch)
              (prompt-insert! ch)

@@ -96,7 +96,11 @@
              (if (< (pet-mood pet) 5) BAR-LO BAR-FG) BG)
   (draw-text 34 1 "] zest[" BAR-FG BG)
   (draw-text 41 1 (bar (pet-energy pet)) BAR-FG BG)
-  (draw-text 1 2 "arrows move  [1]eat [2]play [3]sleep [e]grow [q]bye" HUD-DIM BG)
+  (draw-text 1 2
+             (string-append "arrows 1eat 2play 3sleep e grow g world t talk q  ["
+                            (world-theme) " npcs="
+                            (number->string (world-npc-count)) "]")
+             HUD-DIM BG)
   #t)
 
 (define (pose-face pose blink mood)
@@ -126,7 +130,8 @@
          (draw-y (+ cat-y (anim-hop)))
          (blink (and (string=? pose "idle") (= (modulo frame-n 6) 5))))
     (tui:clear BG BG)
-    (draw-room! W H SCENE-Y0 SCENE-Y1)
+    (world-draw-bg! W H SCENE-Y0 SCENE-Y1)
+    (world-draw-npcs! frame-n)
     (draw-hud! pet frame-n)
     (draw-pixel-cat! cat-x draw-y blink (game-mood-kid pet)
                      (pet-version pet) pose phase)
@@ -134,6 +139,33 @@
     (prompt-draw! HUD-DIM IN-FG BG 0 16777215)
     (tui:present)
     #t))
+
+; After care cmds, handle world gen / talk using live coords.
+(define (apply-cmd-world pet cmd)
+  (cond
+    ((or (string=? cmd "world") (string=? cmd "gen") (string=? cmd "g"))
+     (prompt-set-log! "Generating world via MiniMax...")
+     (plog "world" "generate-start")
+     (world-generate! W H)
+     (game-set-speech!
+       (string-append "Welcome to " (world-theme) "!"))
+     (prompt-set-log! (game-speech))
+     (plog "world" (string-append "theme=" (world-theme)
+                                  " npcs=" (number->string (world-npc-count))))
+     (cons #t pet))
+    ((or (string=? cmd "talk") (string=? cmd "t"))
+     (let ((s (world-nearest-speech *p-x* *p-y*)))
+       (if s
+           (begin
+             (game-set-speech! s)
+             (prompt-set-log! s)
+             (plog "talk" s)
+             (cons #t pet))
+         (begin
+           (game-set-speech! "No one nearby. Walk closer!")
+           (prompt-set-log! (game-speech))
+           (cons #t pet)))))
+    (else (apply-cmd pet cmd))))
 
 (define (apply-cmd pet cmd)
   (let ((r (game-do pet cmd)))
@@ -158,6 +190,11 @@
   (tui:hide-cursor)
   (prompt-init! PROMPT-Y)
   (game-reset!)
+  ; Demo: load prebuilt world file, else offline defaults (no live API).
+  (world-set-path! "/tmp/aura-pets-world.txt")
+  (if (file-exists? "/tmp/aura-pets-world.txt")
+      (world-load! "/tmp/aura-pets-world.txt")
+    (world-reset!))
   (define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
   (define start-x (clamp-x (quotient W 4)))
   (define start-y (clamp-y (quotient (+ SCENE-Y0 (- SCENE-Y1 CAT-H)) 2)))
@@ -238,7 +275,7 @@
          (if (and (pair? e) (string=? (car e) "quit"))
              "tui-quit-event"
            (string-append "key-q pay=" (evt-pay e))))
-       (apply-cmd *p-pet* "q")
+       (apply-cmd-world *p-pet* "q")
        #t)
       ((and (string? act) (string=? act "nav-left"))
        (let ((xy (move-by *p-x* *p-y* -1 0)))
@@ -262,7 +299,7 @@
          #t))
       ((and (string? act) (string=? act "hot"))
        (let* ((cmd (prompt-hot))
-              (r (apply-cmd *p-pet* cmd)))
+              (r (apply-cmd-world *p-pet* cmd)))
          (plog "hot" (string-append "cmd=" cmd
                                     " keep=" (if (still-going? r) "1" "0")))
          (set! *p-pet* (cmd-pet r *p-pet*))
@@ -273,7 +310,7 @@
        (let ((cmd (prompt-take-submit!)))
          (if (= (string-length cmd) 0)
              #t
-           (let ((r (apply-cmd *p-pet* cmd)))
+           (let ((r (apply-cmd-world *p-pet* cmd)))
              (plog "submit" (string-append "cmd=" cmd
                                            " keep=" (if (still-going? r) "1" "0")))
              (set! *p-pet* (cmd-pet r *p-pet*))
@@ -281,7 +318,6 @@
                  #t
                (play-stop! (string-append "submit-stop=" cmd)))))))
       (else #t))))
-
 (define (play-step!)
   (anim-tick!)
   (pet-render-sync)
@@ -317,6 +353,15 @@
   (plog-start! (plog-path))
   (plog "info" (string-append "term=" (number->string W) "x" (number->string H)
                               " " (pet-snap *p-pet*)))
+  ; Load / generate background + NPCs (MiniMax if key present)
+  (world-set-path! "/tmp/aura-pets-world.txt")
+  (plog "world" "generate-or-load")
+  (world-generate! W H)
+  (plog "world" (string-append "theme=" (world-theme)
+                               " npcs=" (number->string (world-npc-count))))
+  (game-set-speech!
+    (string-append "Welcome to " (world-theme) "! Walk to friends + t talk"))
+  (prompt-set-log! (game-speech))
   ; Host (while pred body) runs in C++ — no Scheme stack growth per frame.
   ; Named-let (iter) caused SIGSEGV in eval_flat after ~800 frames.
   (while (lambda () *p-running*)

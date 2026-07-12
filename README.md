@@ -14,14 +14,30 @@ cd /path/to/aura-pets
 
 | Input | Effect |
 |-------|--------|
-| **arrows / wasd** | Move Mochi |
+| **arrows** | Move Mochi |
 | **1** | Eat + eat anim |
 | **2** | Play + hop anim |
 | **3** | Sleep + Zzz anim |
 | **e** | Grow (needs love\*\*\* + happy + full) + sparkle |
+| **g** / `world` | Regenerate bg + NPCs (MiniMax-M3) |
+| **t** / `talk` | Talk to nearest friend NPC |
 | **q** | Bye |
 | `teach feed Nom!` | **Change brain eDSL online** |
 | `brain` | Show rules |
+
+### World + NPCs (LLM)
+
+On play start (and on **g**), `tools/worldgen.py` calls **MiniMax-M3** to invent a soft park scene: sky/floor colors, trees/flowers, and 3–5 friend NPCs with short speech. Aura loads `/tmp/aura-pets-world.txt` and draws bg + sprites.
+
+```bash
+# API key (first non-# line), either path works:
+#   ~/code/keys/minimax   or   ~/code/key/minimax
+#   or export MINIMAX_API_KEY=...
+python3 tools/worldgen.py --out /tmp/aura-pets-world.txt --cols 80 --rows 24
+python3 tools/worldgen.py --offline   # no network, fixed cute defaults
+```
+
+If the API fails, generation falls back offline automatically.
 
 ## Dev
 
@@ -45,8 +61,10 @@ lib/pet-lifecycle.aura   vitals + evolve (atomic-swap)
 lib/pet-edsl.aura        behavior rules + teach + aura commit hook
 lib/pet-anim.aura        action anim timeline
 lib/pet-game.aura        session / commands
+lib/world.aura           bg + NPC load/draw (from worldgen)
 lib/pixel-cat.aura       poses: idle eat play sleep evolve
 lib/tui-prompt.aura      line edit + nav when empty
+tools/worldgen.py        MiniMax-M3 (or offline) → world file
 examples/cat-demo.aura   play scene
 ```
 

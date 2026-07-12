@@ -111,13 +111,24 @@
      (cons #f pet))
 
     ((or (string=? cmd "help") (string=? cmd "?"))
-     (set! *speech* "arrows move  1eat 2play 3sleep  e grow  teach feed Hi")
+     (set! *speech* "1eat 2play 3sleep e grow g=world t=talk")
      (set! *last-act* "help")
      (cons #t pet))
 
     ((or (string=? cmd "brain") (string=? cmd "edsl"))
      (set! *speech* (edsl-show))
      (set! *last-act* "brain")
+     (cons #t pet))
+
+    ; world / gen / g — LLM (or offline) regen of bg + NPCs
+    ((or (string=? cmd "world") (string=? cmd "gen") (string=? cmd "g"))
+     (set! *last-act* "world")
+     (set! *speech* "Making a new world...")
+     (cons #t pet))
+
+    ; talk / t — speech from nearest NPC (caller fills using world-nearest)
+    ((or (string=? cmd "talk") (string=? cmd "t"))
+     (set! *last-act* "talk")
      (cons #t pet))
 
     ((game-try-teach! cmd)

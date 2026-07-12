@@ -30,8 +30,9 @@ FRAMES=10
 MODE="auto"
 
 # pet-log before scene so play-entry can plog-*
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
+export AURA_PETS_ROOT="$SCRIPT_DIR"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -45,8 +46,9 @@ Aura Pets
   ./run.sh smoke
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
-Play: arrows move | 1 eat 2 play 3 sleep | e grow | q bye
-      type: teach feed Hi | brain
+Play: arrows move | 1 eat 2 play 3 sleep | e grow | g world | t talk | q bye
+      type: teach feed Hi | brain | world | talk
+World: MiniMax-M3 generates bg+NPCs (key: ~/code/keys/minimax)
 
 Debug: every play session writes $LOG_FILE
   tail -f /tmp/aura-pets-debug.log

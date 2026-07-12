@@ -1,0 +1,364 @@
+; lib/world.aura — background + NPC world for aura-pets (business).
+;
+; World file format (tools/worldgen.py):
+;   theme:Name
+;   sky:r,g,b  sky2: floor: floor2: star:
+;   npc:Name|x|y|kind|speech
+;   prop:tree|x|y
+;
+; API:
+;   (world-reset!) (world-load! path) (world-generate! cols rows)
+;   (world-draw-bg! w h y0 y1) (world-draw-npcs! frame)
+;   (world-theme) (world-npc-count) (world-nearest-speech x y)
+
+(define *world-theme* "Meadow")
+(define *world-npcs* '())
+(define *world-props* '())
+; Packed RGB ints (same layout as canvas rgb) — avoid depending on canvas load order.
+(define (world-rgb r g b) (+ (* r 65536) (* g 256) b))
+(define *w-sky* 1973790)
+(define *w-sky2* 2963010)
+(define *w-floor* 3635269)
+(define *w-floor2* 2654258)
+(define *w-star* 15132415)
+(define *world-path* "/tmp/aura-pets-world.txt")
+(define *world-ok* #f)
+
+(define (world-empty) (substring "x" 0 0))
+
+(define (world-theme) *world-theme*)
+(define (world-npc-count) (length *world-npcs*))
+(define (world-ok?) *world-ok*)
+(define (world-path) *world-path*)
+
+(define (world-set-path! p)
+  (set! *world-path* p)
+  #t)
+
+; Parse "r,g,b" → packed rgb int (same as canvas rgb).
+(define (parse-rgb s)
+  (let ((n (string-length s)))
+    (let find1 ((i 0))
+      (if (>= i n)
+          0
+        (if (string=? (substring s i (+ i 1)) ",")
+            (let find2 ((j (+ i 1)))
+              (if (>= j n)
+                  0
+                (if (string=? (substring s j (+ j 1)) ",")
+                    (let ((r (string->number (substring s 0 i)))
+                          (g (string->number (substring s (+ i 1) j)))
+                          (b (string->number (substring s (+ j 1) n))))
+                      (if (and (number? r) (number? g) (number? b))
+                          (+ (* r 65536) (* g 256) b)
+                        0))
+                  (find2 (+ j 1)))))
+          (find1 (+ i 1)))))))
+(define (world-reset!)
+  (set! *world-theme* "Sunset Meadow")
+  (set! *world-npcs*
+    (list
+      (list "Bunny" 12 8 "friend" "Hi! Want to play?")
+      (list "Bird" 30 5 "friend" "Chirp! Nice day!")
+      (list "Frog" 22 12 "friend" "Ribbit~")))
+  (set! *world-props*
+    (list
+      (list "tree" 18 13)
+      (list "tree" 35 13)
+      (list "flower" 15 14)
+      (list "flower" 28 14)))
+  (set! *w-sky* (world-rgb 30 50 90))
+  (set! *w-sky2* (world-rgb 45 70 110))
+  (set! *w-floor* (world-rgb 55 110 65))
+  (set! *w-floor2* (world-rgb 40 90 50))
+  (set! *w-star* (world-rgb 230 235 255))
+  (set! *world-ok* #t)
+  #t)
+
+; Split path fields for npc: Name|x|y|kind|speech  (exactly 4 bars)
+(define (world-parse-npc line)
+  ; line without "npc:" prefix
+  (let ((body (substring line 4 (string-length line))))
+    (let* ((n (string-length body))
+           (p1 -1) (p2 -1) (p3 -1) (p4 -1))
+      (let loop ((i 0) (count 0))
+        (if (>= i n) #f
+          (if (string=? (substring body i (+ i 1)) "|")
+              (begin
+                (if (= count 0) (set! p1 i) #t)
+                (if (= count 1) (set! p2 i) #t)
+                (if (= count 2) (set! p3 i) #t)
+                (if (= count 3) (set! p4 i) #t)
+                (loop (+ i 1) (+ count 1)))
+            (loop (+ i 1) count))))
+      (if (or (< p1 0) (< p2 0) (< p3 0) (< p4 0))
+          #f
+        (let ((name (substring body 0 p1))
+              (xs (substring body (+ p1 1) p2))
+              (ys (substring body (+ p2 1) p3))
+              (kind (substring body (+ p3 1) p4))
+              (speech (substring body (+ p4 1) n)))
+          (list name
+                (string->number xs)
+                (string->number ys)
+                kind
+                speech))))))
+
+(define (world-parse-prop line)
+  (let ((body (substring line 5 (string-length line))))
+    (let* ((n (string-length body))
+           (p1 -1) (p2 -1))
+      (let loop ((i 0) (count 0))
+        (if (>= i n) #f
+          (if (string=? (substring body i (+ i 1)) "|")
+              (begin
+                (if (= count 0) (set! p1 i) #t)
+                (if (= count 1) (set! p2 i) #t)
+                (loop (+ i 1) (+ count 1)))
+            (loop (+ i 1) count))))
+      (if (or (< p1 0) (< p2 0))
+          #f
+        (list (substring body 0 p1)
+              (string->number (substring body (+ p1 1) p2))
+              (string->number (substring body (+ p2 1) n)))))))
+
+; Apply one line into world state.
+(define (world-apply-line! line)
+  (let ((n (string-length line)))
+    (if (= n 0)
+        #f
+      (if (and (>= n 6) (string=? (substring line 0 6) "theme:"))
+          (begin (set! *world-theme* (substring line 6 n)) #t)
+        (if (and (>= n 4) (string=? (substring line 0 4) "sky:")
+                 (not (and (>= n 5) (string=? (substring line 0 5) "sky2:"))))
+            (begin (set! *w-sky* (parse-rgb (substring line 4 n))) #t)
+          (if (and (>= n 5) (string=? (substring line 0 5) "sky2:"))
+              (begin (set! *w-sky2* (parse-rgb (substring line 5 n))) #t)
+            (if (and (>= n 6) (string=? (substring line 0 6) "floor:")
+                     (not (and (>= n 7) (string=? (substring line 0 7) "floor2:"))))
+                (begin (set! *w-floor* (parse-rgb (substring line 6 n))) #t)
+              (if (and (>= n 7) (string=? (substring line 0 7) "floor2:"))
+                  (begin (set! *w-floor2* (parse-rgb (substring line 7 n))) #t)
+                (if (and (>= n 5) (string=? (substring line 0 5) "star:"))
+                    (begin (set! *w-star* (parse-rgb (substring line 5 n))) #t)
+                  (if (and (>= n 4) (string=? (substring line 0 4) "npc:"))
+                      (let ((npc (world-parse-npc line)))
+                        (if npc
+                            (begin
+                              (set! *world-npcs* (append *world-npcs* (list npc)))
+                              #t)
+                          #f))
+                    (if (and (>= n 5) (string=? (substring line 0 5) "prop:"))
+                        (let ((pr (world-parse-prop line)))
+                          (if pr
+                              (begin
+                                (set! *world-props* (append *world-props* (list pr)))
+                                #t)
+                            #f))
+                      #f)))))))))))
+
+; Split file text by newlines and apply.
+(define (world-load-text! text)
+  (set! *world-npcs* '())
+  (set! *world-props* '())
+  (let ((n (string-length text)))
+    (let loop ((i 0) (start 0))
+      (if (>= i n)
+          (begin
+            (if (< start n)
+                (world-apply-line! (substring text start n))
+              #t)
+            (set! *world-ok* #t)
+            #t)
+        (if (string=? (substring text i (+ i 1)) "\n")
+            (begin
+              (if (> i start)
+                  (world-apply-line! (substring text start i))
+                #t)
+              (loop (+ i 1) (+ i 1)))
+          (loop (+ i 1) start))))))
+
+(define (world-load! path)
+  (set! *world-path* path)
+  (try
+    (begin
+      (world-reset!)
+      (set! *world-npcs* '())
+      (set! *world-props* '())
+      (if (file-exists? path)
+          (begin
+            (world-load-text! (read-file path))
+            (if (= (length *world-npcs*) 0)
+                (world-reset!)
+              #t)
+            #t)
+        (begin (world-reset!) #f)))
+    (catch (e)
+      (begin (world-reset!) #f))))
+
+; Resolve repo root: AURA_PETS_ROOT env, then common install paths.
+(define (world-repo-root)
+  (let ((env (try (getenv "AURA_PETS_ROOT") (catch (e) #f))))
+    (if (and env (string? env) (> (string-length env) 0)
+             (file-exists? (string-append env "/tools/worldgen.py")))
+        env
+      (if (file-exists? "/home/dev/code/aura-pets/tools/worldgen.py")
+          "/home/dev/code/aura-pets"
+        "."))))
+
+; Shell out to tools/worldgen.py (MiniMax-M3 if key present, else offline).
+(define (world-generate! cols rows)
+  (let* ((root (world-repo-root))
+         (py (string-append root "/tools/worldgen.py"))
+         (out *world-path*)
+         (cmd (string-append "python3 " py
+                             " --out " out
+                             " --cols " (number->string cols)
+                             " --rows " (number->string rows)
+                             " 2>>/tmp/aura-pets-debug.log")))
+    (try
+      (begin
+        (shell cmd)
+        (world-load! out)
+        #t)
+      (catch (e)
+        (begin (world-reset!) #f)))))
+
+; Offline only (no network).
+(define (world-generate-offline! cols rows)
+  (let* ((root (world-repo-root))
+         (py (string-append root "/tools/worldgen.py"))
+         (out *world-path*)
+         (cmd (string-append "python3 " py
+                             " --out " out
+                             " --cols " (number->string cols)
+                             " --rows " (number->string rows)
+                             " --offline"
+                             " 2>>/tmp/aura-pets-debug.log")))
+    (try
+      (begin (shell cmd) (world-load! out) #t)
+      (catch (e) (begin (world-reset!) #f)))))
+
+; ── Drawing ──
+
+(define (world-px col row top bot)
+  (tui:pixel col row top bot)
+  #t)
+
+(define (world-draw-bg! w h y0 y1)
+  (let ((floor-y (- y1 2)))
+    (let y-loop ((y y0))
+      (if (>= y y1) #t
+        (begin
+          (let x-loop ((x 0))
+            (if (>= x w) #t
+              (begin
+                (if (>= y floor-y)
+                    (world-px x y *w-floor* *w-floor2*)
+                  (world-px x y *w-sky* *w-sky2*))
+                (x-loop (+ x 1)))))
+          (y-loop (+ y 1)))))
+    ; stars
+    (world-px 5 (+ y0 1) *w-star* *w-sky*)
+    (world-px 18 (+ y0 2) *w-star* *w-sky*)
+    (world-px 35 (+ y0 1) *w-star* *w-sky*)
+    (world-px 52 (+ y0 2) *w-star* *w-sky*)
+    (world-px 70 (+ y0 1) *w-star* *w-sky*)
+    ; props
+    (world-draw-props!)
+    #t))
+
+(define (world-draw-props!)
+  (let loop ((xs *world-props*))
+    (if (null? xs) #t
+      (begin
+        (let* ((p (car xs))
+               (kind (car p))
+               (x (car (cdr p)))
+               (y (car (cdr (cdr p)))))
+          (if (string=? kind "tree")
+              (world-draw-tree! x y)
+            (if (string=? kind "flower")
+                (world-draw-flower! x y)
+              (world-draw-rock! x y))))
+        (loop (cdr xs))))))
+
+(define (world-draw-tree! x y)
+  (let ((green (world-rgb 40 140 60))
+        (green2 (world-rgb 30 110 45))
+        (bark (world-rgb 110 70 40)))
+    (world-px x (- y 2) green green2)
+    (world-px (+ x 1) (- y 2) green green)
+    (world-px (- x 1) (- y 1) green green2)
+    (world-px x (- y 1) green green)
+    (world-px (+ x 1) (- y 1) green green2)
+    (world-px (+ x 2) (- y 1) green green)
+    (world-px x y bark bark)
+    (world-px (+ x 1) y bark bark)
+    #t))
+
+(define (world-draw-flower! x y)
+  (let ((pink (world-rgb 255 120 160))
+        (yel (world-rgb 255 220 80))
+        (stem (world-rgb 50 160 70)))
+    (world-px x (- y 1) pink yel)
+    (world-px x y stem stem)
+    #t))
+
+(define (world-draw-rock! x y)
+  (let ((g (world-rgb 120 120 130))
+        (g2 (world-rgb 90 90 100)))
+    (world-px x y g g2)
+    (world-px (+ x 1) y g2 g)
+    #t))
+
+; Simple NPC blobs + label
+(define (world-draw-npcs! frame)
+  (let loop ((xs *world-npcs*))
+    (if (null? xs) #t
+      (begin
+        (let* ((n (car xs))
+               (name (car n))
+               (x (car (cdr n)))
+               (y (car (cdr (cdr n))))
+               (kind (car (cdr (cdr (cdr n)))))
+               (bob (if (= (modulo frame 8) 0) 0
+                      (if (= (modulo frame 8) 4) 0 0))))
+          (world-draw-npc-sprite! x (+ y bob) kind name)
+          (draw-text x (+ y 2) name (world-rgb 200 220 255) 0))
+        (loop (cdr xs))))))
+
+(define (world-draw-npc-sprite! x y kind name)
+  (let ((fur (if (string=? kind "decor")
+                 (world-rgb 180 180 200)
+               (world-rgb 255 200 120)))
+        (fur2 (world-rgb 240 160 90))
+        (eye (world-rgb 40 40 50)))
+    ; mini creature 3x2 cells
+    (world-px x y fur fur2)
+    (world-px (+ x 1) y fur fur)
+    (world-px (+ x 2) y fur2 fur)
+    (world-px x (+ y 1) fur2 fur)
+    (world-px (+ x 1) (+ y 1) eye fur)
+    (world-px (+ x 2) (+ y 1) fur fur2)
+    #t))
+
+; Nearest friend NPC speech within manhattan dist 6
+(define (world-nearest-speech px py)
+  (let loop ((xs *world-npcs*) (best #f) (best-d 999))
+    (if (null? xs)
+        best
+      (let* ((n (car xs))
+             (x (car (cdr n)))
+             (y (car (cdr (cdr n))))
+             (kind (car (cdr (cdr (cdr n)))))
+             (speech (car (cdr (cdr (cdr (cdr n))))))
+             (dx (if (> px x) (- px x) (- x px)))
+             (dy (if (> py y) (- py y) (- y py)))
+             (d (+ dx dy)))
+        (if (and (string=? kind "friend")
+                 (< d best-d)
+                 (<= d 6)
+                 (> (string-length speech) 0))
+            (loop (cdr xs) speech d)
+          (loop (cdr xs) best best-d))))))
