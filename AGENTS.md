@@ -45,3 +45,7 @@ On exit, `run.sh` prints the last 25 lines. Look for:
 # after unexpected exit:
 tail -50 /tmp/aura-pets-debug.log
 ```
+
+**Known crash (fixed in cde2913):** Scheme `(let iter () … (iter))` main loop
+overflowed `eval_flat` stack after ~800 frames → SIGSEGV. Play must use
+host `(while pred body)` (C++ for-loop) instead of recursive named-let.
