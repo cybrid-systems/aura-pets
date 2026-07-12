@@ -98,16 +98,12 @@
 ; We deliberately do NOT call set-code / eval-current mid-session: replacing
 ; the workspace flat invalidates closures from loaded modules (TUI breaks).
 ; Returns "snap" | "local".
+; Play-safe: write small side file only. Skip ast:snapshot mid-session
+; (observed SIGSEGV in eval_flat after long play + LLM apply).
 (define (edsl-aura-commit!)
   (let ((src (edsl-to-aura-source)))
     (try
       (begin
-        (ast:snapshot "pet-edsl")
-        (try
-          (write-file "/tmp/aura-pets-edsl.aura" src)
-          (catch (e) #f))
-        "snap")
-      (catch (e)
-        (begin
-          (try (write-file "/tmp/aura-pets-edsl.aura" src) (catch (e2) #f))
-          "local")))))
+        (try (write-file "/tmp/aura-pets-edsl.aura" src) (catch (e) #f))
+        "save")
+      (catch (e) "local"))))

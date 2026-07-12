@@ -47,13 +47,23 @@
 (define (world-set-star! c) (set! *w-star* c) #t)
 (define (world-clear-npcs!) (set! *world-npcs* '()) #t)
 (define (world-clear-props!) (set! *world-props* '()) #t)
+; Hard caps — too many entities blow eval_flat / frame time mid-play.
+(define *world-max-npcs* 6)
+(define *world-max-props* 14)
+
 (define (world-add-npc! npc)
-  (set! *world-npcs* (append *world-npcs* (list npc)))
-  (set! *world-ok* #t)
-  #t)
+  (if (>= (length *world-npcs*) *world-max-npcs*)
+      #f
+    (begin
+      (set! *world-npcs* (append *world-npcs* (list npc)))
+      (set! *world-ok* #t)
+      #t)))
 (define (world-add-prop! pr)
-  (set! *world-props* (append *world-props* (list pr)))
-  #t)
+  (if (>= (length *world-props*) *world-max-props*)
+      #f
+    (begin
+      (set! *world-props* (append *world-props* (list pr)))
+      #t)))
 
 ; Remove first NPC matching name (fainted in combat).
 (define (world-remove-npc-name! name)
@@ -144,24 +154,13 @@
          (s4 (string-append s3 "))\n(set! *world-ok* #t)\n")))
     s4))
 
-; Hot path (play-safe): in-memory *world-* already mutated; snapshot + side file.
-; No set-code mid-session (invalidates loaded closures / TUI). See edsl-aura-commit!.
-; Returns "snap" | "local".
+; Play-safe commit: only world-save! (line file). Skip huge to-aura-source
+; and ast:snapshot under load — both have crashed eval_flat mid-session.
+; Returns "save" | "local".
 (define (world-aura-commit!)
-  (let ((src (world-to-aura-source)))
-    (try
-      (begin
-        (ast:snapshot "pet-world")
-        (try
-          (write-file "/tmp/aura-pets-world.aura" src)
-          (catch (e) #f))
-        (world-save!)
-        "snap")
-      (catch (e)
-        (begin
-          (try (write-file "/tmp/aura-pets-world.aura" src) (catch (e2) #f))
-          (world-save!)
-          "local")))))
+  (try
+    (begin (world-save!) "save")
+    (catch (e) "local")))
 
 ; Parse "r,g,b" → packed rgb int (same as canvas rgb).
 (define (parse-rgb s)

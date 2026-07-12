@@ -75,11 +75,12 @@ help:
 Rules:
 - Kid-safe. Player may write Chinese or English — understand both.
 - say/teach speech may be Chinese or English (max lengths still apply).
-- NPC Name: prefer short ASCII (Bunny) for terminal glyphs; speech can be CN.
-- If they ask for new place/background/scene/world/NPCs/props/colors: emit theme + colors + npc_clear + 3-5 npc + prop_clear + 3-6 prop. x in [2,COLS-4], y in [4,ROWS-7].
+- NPC Name: short ASCII only (max 10 letters). Speech max 28 chars.
+- HARD LIMITS (engine crash if exceeded): at most 5 npc lines, at most 10 prop lines.
+- If they ask for new place/background/scene/world/NPCs/props/colors: emit theme + colors + npc_clear + 3-5 npc + prop_clear + 4-10 prop. x in [2,COLS-4], y in [4,ROWS-7].
+- Never emit x >= COLS or y >= ROWS. Never invent 20+ NPCs.
 - If they only want to change what the pet says for an action: emit teach: lines (+ aura:commit).
-- If they want both world and teach: emit both.
-- Prefer aura:commit after any teach: so Aura AST/hot path runs.
+- Prefer aura:commit after any teach.
 - If unclear: emit help: and a short say:
 - Never invent other prefixes. No code fences.
 """
@@ -323,8 +324,15 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
 
 
 def sanitize_ops(text: str, cols: int, rows: int) -> str:
+    """Keep only valid ops; hard-cap NPC/prop counts to protect the TUI runtime."""
     out: list[str] = []
     has_useful = False
+    npc_n = 0
+    prop_n = 0
+    max_npc = 5
+    max_prop = 10
+    x_hi = max(3, cols - 4)
+    y_hi = max(5, rows - 7)
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or line.startswith("```"):
@@ -335,7 +343,6 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
             continue
         if line.startswith("theme:"):
             name = text_clip(line[6:], 24) or "Park"
-            # theme still mostly ASCII for HUD stability; allow CJK
             name = re.sub(r"[^\w \-'\u4e00-\u9fff]", "", name)[:24] or "Park"
             out.append(f"theme:{name}")
             has_useful = True
@@ -347,6 +354,10 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
         key = line.rstrip(":").lower()
         if key in ("npc_clear", "prop_clear", "help", "world_regen"):
             out.append(key + ":")
+            if key == "npc_clear":
+                npc_n = 0
+            if key == "prop_clear":
+                prop_n = 0
             has_useful = True
             continue
         if key == "aura:commit" or line.lower() in ("aura:commit", "aura:commit:"):
@@ -358,20 +369,26 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
             line,
         )
         if m:
+            if npc_n >= max_npc:
+                continue
             name, xs, ys, kind, speech = m.groups()
-            x = max(2, min(cols - 4, int(xs)))
-            y = max(4, min(rows - 7, int(ys)))
+            x = max(2, min(x_hi, int(xs)))
+            y = max(4, min(y_hi, int(ys)))
             out.append(
-                f"npc:{name.strip()}|{x}|{y}|{kind}|{text_clip(speech, 28)}"
+                f"npc:{name.strip()[:10]}|{x}|{y}|{kind}|{text_clip(speech, 28)}"
             )
+            npc_n += 1
             has_useful = True
             continue
         m = re.match(r"^prop:(tree|flower|rock|crate|wall|bush)\|(\d+)\|(\d+)$", line)
         if m:
+            if prop_n >= max_prop:
+                continue
             kind, xs, ys = m.groups()
             x = max(2, min(cols - 3, int(xs)))
             y = max(5, min(rows - 5, int(ys)))
             out.append(f"prop:{kind}|{x}|{y}")
+            prop_n += 1
             has_useful = True
             continue
         m = re.match(
@@ -392,7 +409,6 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
             continue
     if not has_useful:
         return offline_ops("help", cols, rows)
-    # auto aura commit if teach present without commit
     if any(x.startswith("teach:") for x in out) and "aura:commit" not in out:
         out.append("aura:commit")
     return "\n".join(out) + "\n"

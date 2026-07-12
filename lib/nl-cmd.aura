@@ -134,6 +134,44 @@
         (catch (e)
           (begin (set! *nl-busy* #f) #f))))))
 
+; Apply finished job in-process only (no mid-session AST dump — can SIGSEGV).
+(define (nl-apply-done! kind)
+  (try
+    (begin
+      (if (string=? kind "world")
+          (begin
+            (world-load! "/tmp/aura-pets-world.txt")
+            ; light persist only
+            (try (world-save!) (catch (e) #f))
+            (set! *nl-last-src* "async-world-ok")
+            (set! *nl-last-say*
+              (string-append "Welcome to " (world-theme) "!"))
+            *nl-last-say*)
+        (begin
+          (set! *nl-last-say* "")
+          (set! *nl-did-aura* #f)
+          (if (file-exists? *nl-path*)
+              (begin
+                (nl-apply-file! *nl-path*)
+                ; Skip edsl/world-aura-commit mid-play (eval_flat crash under load).
+                (try (world-save!) (catch (e) #f))
+                (if (= (string-length *nl-last-say*) 0)
+                    (set! *nl-last-say*
+                      (string-append "OK " (world-theme)
+                        " npcs=" (number->string (world-npc-count))))
+                  #t)
+                (set! *nl-last-src* "async-ok")
+                *nl-last-say*)
+            (begin
+              (set! *nl-last-say* "NL tool failed.")
+              (set! *nl-last-src* "async-miss")
+              *nl-last-say*)))))
+    (catch (e)
+      (begin
+        (set! *nl-last-src* "async-apply-err")
+        (set! *nl-last-say* "World update glitched — still playing!")
+        *nl-last-say*))))
+
 ; Finish apply after async job. Returns speech string, or #f if still pending.
 (define (nl-poll!)
   (if (not *nl-busy*)
@@ -149,34 +187,7 @@
           (let ((kind *nl-busy*))
             (set! *nl-busy* #f)
             (try (shell (string-append "rm -f " *nl-done-path*)) (catch (e) #f))
-            (if (string=? kind "world")
-                (begin
-                  (world-load! "/tmp/aura-pets-world.txt")
-                  (world-aura-commit!)
-                  (set! *nl-last-src* "async-world-ok")
-                  (set! *nl-last-say*
-                    (string-append "Welcome to " (world-theme) "!"))
-                  *nl-last-say*)
-              (begin
-                (set! *nl-last-say* "")
-                (set! *nl-did-aura* #f)
-                (if (file-exists? *nl-path*)
-                    (begin
-                      (nl-apply-file! *nl-path*)
-                      (if (not *nl-did-aura*)
-                          (begin (edsl-aura-commit!) (world-aura-commit!))
-                        #t)
-                      (if (= (string-length *nl-last-say*) 0)
-                          (set! *nl-last-say*
-                            (string-append "OK " (world-theme)
-                              " npcs=" (number->string (world-npc-count))))
-                        #t)
-                      (set! *nl-last-src* "async-ok")
-                      *nl-last-say*)
-                  (begin
-                    (set! *nl-last-say* "NL tool failed.")
-                    (set! *nl-last-src* "async-miss")
-                    *nl-last-say*)))))
+            (nl-apply-done! kind))
         #f))))
 
 ; Minimal shell escape: strip double quotes and backslashes.

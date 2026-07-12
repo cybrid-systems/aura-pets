@@ -430,18 +430,23 @@
       (else #t))))
 ; Apply finished async NL / worldgen without blocking the move loop.
 (define (play-poll-async!)
-  (let ((msg (nl-poll!)))
-    (if msg
-        (begin
-          (game-set-speech! msg)
-          (prompt-set-log! msg)
-          (plog "nl" (string-append "async-done say=" msg
-                                    " theme=" (world-theme)
-                                    " npcs=" (number->string (world-npc-count))
-                                    " src=" (nl-last-src)
-                                    " brain=" (edsl-show)))
-          #t)
-      #f)))
+  (try
+    (let ((msg (nl-poll!)))
+      (if msg
+          (begin
+            (game-set-speech! msg)
+            (prompt-set-log! msg)
+            ; Keep log short — edsl-show/string-append of huge state can OOM stack.
+            (plog "nl" (string-append "async-done src=" (nl-last-src)
+                                      " npcs=" (number->string (world-npc-count))))
+            #t)
+        #f))
+    (catch (e)
+      (begin
+        (plog "nl" "async-apply-exception")
+        (game-set-speech! "Update skipped — keep playing!")
+        (prompt-set-log! (game-speech))
+        #f))))
 
 (define (play-step!)
   ; Input first (low latency), then simulate, then draw.
