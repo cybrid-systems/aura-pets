@@ -1,8 +1,9 @@
-; lib/pixel-cat.aura — high-fidelity half-block cat (truecolor 24-bit).
+; lib/pixel-cat.aura — compact refined half-block cat (truecolor 24-bit).
 ;
 ; tui:pixel paints UPPER half (top) + LOWER half (bot) of one cell —
 ; use distinct top/bot for soft gradients and sub-cell detail.
 ;
+; Sprite footprint: ~7×4 cells (was ~12×6) — smaller, cleaner silhouette.
 ; (draw-pixel-cat! col row blink? mood version pose phase face)
 ; face: left|right|up|down   pose: idle|eat|play|sleep|evolve|fight
 
@@ -10,35 +11,33 @@
   (tui:pixel col row top bot)
   #t)
 
-; Soft vertical shade: lighter top, deeper bottom.
 (define (px-v col row hi lo)
   (tui:pixel col row hi lo)
   #t)
 
 ; ── Form palettes: (hi mid lo belly ear-in accent) ──
-; Tuned for truecolor terminals (not 256-color approximations).
 (define (cat-palette version)
   (cond
     ; Kitten — warm cream peach
     ((= version 0)
-     (list (rgb 255 214 186) (rgb 255 186 145) (rgb 230 145 105)
-           (rgb 255 236 220) (rgb 255 160 175) (rgb 255 110 145)))
+     (list (rgb 255 220 198) (rgb 255 190 155) (rgb 235 150 115)
+           (rgb 255 240 228) (rgb 255 165 180) (rgb 255 120 155)))
     ; Pink Cat — sakura rose
     ((= version 1)
-     (list (rgb 255 190 220) (rgb 255 145 195) (rgb 220 95 160)
-           (rgb 255 220 235) (rgb 255 130 180) (rgb 255 90 160)))
-    ; Tiger — amber gold + stripe lo
+     (list (rgb 255 200 228) (rgb 255 155 200) (rgb 230 105 165)
+           (rgb 255 228 240) (rgb 255 140 185) (rgb 255 95 165)))
+    ; Tiger — amber gold
     ((= version 2)
-     (list (rgb 255 200 110) (rgb 245 165 55) (rgb 200 110 35)
-           (rgb 255 230 180) (rgb 255 150 80) (rgb 90 50 25)))
+     (list (rgb 255 210 130) (rgb 250 170 65) (rgb 205 115 40)
+           (rgb 255 235 190) (rgb 255 160 90) (rgb 95 55 28)))
     ; Shadow — violet dusk
     ((= version 3)
-     (list (rgb 175 145 230) (rgb 125 95 185) (rgb 70 45 120)
-           (rgb 200 175 240) (rgb 210 120 255) (rgb 255 100 220)))
+     (list (rgb 185 160 235) (rgb 135 105 195) (rgb 80 55 130)
+           (rgb 210 185 245) (rgb 215 130 255) (rgb 255 110 225)))
     ; Dragon — molten gold
     (else
-     (list (rgb 255 235 140) (rgb 255 195 70) (rgb 230 130 35)
-           (rgb 255 245 200) (rgb 255 160 60) (rgb 255 80 40)))))
+     (list (rgb 255 240 155) (rgb 255 200 80) (rgb 235 140 40)
+           (rgb 255 248 210) (rgb 255 165 70) (rgb 255 85 45)))))
 
 (define (pal-hi p) (car p))
 (define (pal-mid p) (car (cdr p)))
@@ -52,122 +51,21 @@
 (define (cat-lean-y face)
   (cond ((string=? face "up") -1) ((string=? face "down") 1) (else 0)))
 
-; Eye pair columns relative to body origin for facing.
+; Eye columns relative to body origin (compact 7-wide body).
 (define (cat-eye-pair face)
   (cond
-    ((string=? face "left") (cons 3 4))
-    ((string=? face "right") (cons 7 8))
-    ((string=? face "up") (cons 4 7))
-    (else (cons 4 7))))
+    ((string=? face "left") (cons 1 2))
+    ((string=? face "right") (cons 4 5))
+    ((string=? face "up") (cons 2 4))
+    (else (cons 2 4))))
 
-; ── Detail helpers ──
-(define (cat-draw-eyes! c br e1 e2 pupil sclera lid blink? sleep?)
-  (if (or blink? sleep?)
-      (begin
-        ; closed lids — soft curve
-        (px-v (+ c e1) (+ br 2) lid lid)
-        (px-v (+ c e2) (+ br 2) lid lid)
-        #t)
-    (begin
-      ; sclera (top half white-ish) + pupil (bottom half)
-      (px-v (+ c e1) (+ br 2) sclera pupil)
-      (px-v (+ c e2) (+ br 2) sclera pupil)
-      ; tiny highlight on left of each eye (top-left gleam)
-      (px-v (+ c e1) (+ br 2) (rgb 255 255 255) pupil)
-      #t)))
-
-(define (cat-draw-snout! c br face mid lo nose mouth)
-  (cond
-    ((string=? face "right")
-     (begin
-       (px-v (+ c 9) (+ br 2) mid nose)
-       (px-v (+ c 10) (+ br 2) nose nose)
-       (px-v (+ c 11) (+ br 2) nose (rgb 255 180 200))
-       (px-v (+ c 10) (+ br 3) mouth lo)
-       (px-v (+ c 11) (+ br 3) lo mouth)
-       #t))
-    ((string=? face "left")
-     (begin
-       (px-v (+ c 2) (+ br 2) mid nose)
-       (px-v (+ c 1) (+ br 2) nose nose)
-       (px-v c (+ br 2) nose (rgb 255 180 200))
-       (px-v (+ c 1) (+ br 3) mouth lo)
-       (px-v c (+ br 3) lo mouth)
-       #t))
-    ((string=? face "up")
-     (begin
-       (px-v (+ c 5) br nose nose)
-       (px-v (+ c 6) br nose mid)
-       (px-v (+ c 5) (- br 1) nose (rgb 255 200 210))
-       #t))
-    (else
-     (begin
-       (px-v (+ c 5) (+ br 4) mid nose)
-       (px-v (+ c 6) (+ br 4) nose mid)
-       (px-v (+ c 5) (+ br 5) nose mouth)
-       #t))))
-
-(define (cat-draw-tail! c br face hi mid lo phase)
-  (let ((wag (if (= (modulo phase 2) 0) 0 1)))
-    (cond
-      ((string=? face "right")
-       (begin
-         (px-v c (+ br 2) mid lo)
-         (px-v c (+ br 3) lo mid)
-         (px-v (- c 1) (+ br 2 wag) hi mid)
-         (px-v (- c 1) (+ br 3) mid lo)
-         #t))
-      ((string=? face "left")
-       (begin
-         (px-v (+ c 11) (+ br 2) mid lo)
-         (px-v (+ c 11) (+ br 3) lo mid)
-         (px-v (+ c 12) (+ br 2 wag) hi mid)
-         (px-v (+ c 12) (+ br 3) mid lo)
-         #t))
-      ((string=? face "up")
-       (begin
-         (px-v (+ c 10) (+ br 4) mid lo)
-         (px-v (+ c 11) (+ br 5 wag) hi mid)
-         #t))
-      (else
-       (begin
-         (px-v (+ c 10) (+ br 1) mid lo)
-         (px-v (+ c 11) (+ br wag) hi mid)
-         #t)))))
-
-(define (cat-draw-ears! c br face hi mid ear-in acc front?)
-  ; outer ear mid/lo, inner ear pink highlight
-  (if (string=? face "left")
-      (begin
-        (px-v (+ c 1) br ear-in acc)
-        (px-v (+ c 2) br ear-in mid)
-        (px-v (+ c 3) br hi mid)
-        (px-v (+ c 8) br mid hi)
-        (px-v (+ c 9) br mid ear-in)
-        (if front? (px-v (+ c 1) (- br 1) ear-in ear-in) #t)
-        #t)
-    (if (string=? face "right")
-        (begin
-          (px-v (+ c 2) br mid ear-in)
-          (px-v (+ c 3) br hi mid)
-          (px-v (+ c 8) br mid hi)
-          (px-v (+ c 9) br ear-in mid)
-          (px-v (+ c 10) br acc ear-in)
-          (if front? (px-v (+ c 10) (- br 1) ear-in ear-in) #t)
-          #t)
-      (begin
-        (px-v (+ c 2) br ear-in mid)
-        (px-v (+ c 3) br hi mid)
-        (px-v (+ c 8) br mid hi)
-        (px-v (+ c 9) br mid ear-in)
-        (if (string=? face "up")
-            (begin
-              (px-v (+ c 2) (- br 1) ear-in hi)
-              (px-v (+ c 9) (- br 1) hi ear-in))
-          #t)
-        #t))))
-
-; Full cat sprite (~12×6 cells with half-block shading).
+; ── Compact refined sprite (~7 wide × 4 tall) ──
+;
+;   0:   ^   ^     ears
+;   1:  ( o o )    face + eyes + blush
+;   2:   )===(     body / belly
+;   3:   "   "     paws + tail tip
+;
 (define (draw-pixel-cat! col row blink? mood version pose phase face)
   (let* ((pal (cat-palette version))
          (hi (pal-hi pal))
@@ -190,135 +88,171 @@
          (sclera (rgb 255 252 248))
          (pupil (cond
                   (sleep? mid)
-                  ((string=? pose "fight") (rgb 220 30 50))
-                  ((string=? mood "happy") (rgb 45 160 95))
+                  ((string=? pose "fight") (rgb 220 35 55))
+                  ((string=? mood "happy") (rgb 40 155 90))
                   ((string=? mood "sad") (rgb 70 90 140))
-                  (else (rgb 35 32 48))))
-         (lid (rgb 210 150 130))
-         (nose (rgb 255 120 150))
-         (mouth (if (string=? pose "eat") (rgb 255 90 100) (rgb 180 80 100)))
-         (food (rgb 255 215 70))
-         (food2 (rgb 230 160 40))
-         (zzz (rgb 170 200 255))
-         (spark (rgb 255 250 140))
-         (slash (rgb 255 70 90))
-         (slash2 (rgb 255 200 100)))
-    ; ── ears ──
-    (cat-draw-ears! c br fc hi mid ear-in acc
-                    (or (string=? pose "play") (string=? pose "fight")))
-    ; ── crown / forehead (row+1) soft gradient ──
-    (px-v (+ c 2) (+ br 1) lo mid)
-    (px-v (+ c 3) (+ br 1) hi mid)
-    (px-v (+ c 4) (+ br 1) hi hi)
-    (px-v (+ c 5) (+ br 1) hi mid)
-    (px-v (+ c 6) (+ br 1) hi mid)
-    (px-v (+ c 7) (+ br 1) hi hi)
-    (px-v (+ c 8) (+ br 1) hi mid)
-    (px-v (+ c 9) (+ br 1) mid lo)
-    ; ── face row (row+2): cheeks + eyes ──
-    (px-v (+ c 2) (+ br 2) lo mid)
-    (px-v (+ c 3) (+ br 2) (rgb 255 170 175) mid)  ; blush L
-    (px-v (+ c 4) (+ br 2) mid hi)
-    (px-v (+ c 5) (+ br 2) mid mid)
-    (px-v (+ c 6) (+ br 2) mid mid)
-    (px-v (+ c 7) (+ br 2) mid hi)
-    (px-v (+ c 8) (+ br 2) (rgb 255 170 175) mid)  ; blush R
-    (px-v (+ c 9) (+ br 2) mid lo)
-    (cat-draw-eyes! c br e1 e2 pupil sclera lid blink? sleep?)
-    ; ── muzzle row (row+3) ──
-    (px-v (+ c 2) (+ br 3) lo mid)
-    (px-v (+ c 3) (+ br 3) mid belly)
-    (px-v (+ c 4) (+ br 3) belly mid)
-    (px-v (+ c 5) (+ br 3) nose mouth)
-    (px-v (+ c 6) (+ br 3)
-          (if (string=? pose "eat") food belly) mid)
-    (px-v (+ c 7) (+ br 3) belly mid)
-    (px-v (+ c 8) (+ br 3) mid belly)
-    (px-v (+ c 9) (+ br 3) mid lo)
-    (cat-draw-snout! c br fc mid lo nose mouth)
-    ; ── torso (row+4) belly band + paws ──
-    (px-v (+ c 1) (+ br 4) lo mid)
-    (px-v (+ c 2) (+ br 4) mid lo)
-    (px-v (+ c 3) (+ br 4) belly mid)
-    (px-v (+ c 4) (+ br 4) belly belly)
-    (px-v (+ c 5) (+ br 4) belly mid)
-    (px-v (+ c 6) (+ br 4) belly mid)
-    (px-v (+ c 7) (+ br 4) belly belly)
-    (px-v (+ c 8) (+ br 4) belly mid)
-    (px-v (+ c 9) (+ br 4) mid lo)
-    (px-v (+ c 10) (+ br 4) mid lo)
-    ; paws (row+5) — alternating walk
-    (if (or (= (modulo phase 2) 0) (string=? pose "sleep"))
+                  (else (rgb 32 30 48))))
+         (lid (rgb 215 155 135))
+         (nose (rgb 255 125 155))
+         (mouth (if (string=? pose "eat") (rgb 255 95 105) (rgb 185 85 105)))
+         (blush (rgb 255 175 185))
+         (food (rgb 255 215 75))
+         (food2 (rgb 235 165 45))
+         (zzz (rgb 175 205 255))
+         (spark (rgb 255 250 150))
+         (slash (rgb 255 75 95))
+         (slash2 (rgb 255 205 110))
+         (wag (if (= (modulo phase 2) 0) 0 1)))
+    ; ── row 0: ears (tiny triangles via half-block) ──
+    (cond
+      ((string=? fc "left")
+       (begin
+         (px-v (+ c 1) br ear-in acc)
+         (px-v (+ c 2) br hi mid)
+         (px-v (+ c 4) br mid hi)
+         (px-v (+ c 5) br mid ear-in)))
+      ((string=? fc "right")
+       (begin
+         (px-v (+ c 1) br mid ear-in)
+         (px-v (+ c 2) br hi mid)
+         (px-v (+ c 4) br mid hi)
+         (px-v (+ c 5) br acc ear-in)))
+      (else
+       (begin
+         (px-v (+ c 1) br ear-in mid)
+         (px-v (+ c 2) br hi mid)
+         (px-v (+ c 4) br mid hi)
+         (px-v (+ c 5) br mid ear-in)
+         (if (string=? fc "up")
+             (begin
+               (px-v (+ c 1) (- br 1) ear-in hi)
+               (px-v (+ c 5) (- br 1) hi ear-in))
+           #t))))
+    ; play / fight: ears perk one half-cell up
+    (if (or (string=? pose "play") (string=? pose "fight"))
         (begin
-          (px-v (+ c 3) (+ br 5) mid lo)
-          (px-v (+ c 4) (+ br 5) lo mid)
-          (px-v (+ c 7) (+ br 5) mid lo)
-          (px-v (+ c 8) (+ br 5) lo mid))
+          (px-v (+ c 1) (- br 1) ear-in hi)
+          (px-v (+ c 5) (- br 1) hi ear-in))
+      #t)
+
+    ; ── row 1: face crown + cheeks + eyes ──
+    (px-v c (+ br 1) lo mid)
+    (px-v (+ c 1) (+ br 1) blush mid)
+    (px-v (+ c 2) (+ br 1) hi mid)
+    (px-v (+ c 3) (+ br 1) hi hi)
+    (px-v (+ c 4) (+ br 1) hi mid)
+    (px-v (+ c 5) (+ br 1) blush mid)
+    (px-v (+ c 6) (+ br 1) mid lo)
+    ; eyes (overwrite eye cells with sclera/pupil half-blocks)
+    (if (or blink? sleep?)
+        (begin
+          (px-v (+ c e1) (+ br 1) lid lid)
+          (px-v (+ c e2) (+ br 1) lid lid))
       (begin
-        (px-v (+ c 2) (+ br 5) mid lo)
-        (px-v (+ c 3) (+ br 5) lo mid)
-        (px-v (+ c 8) (+ br 5) mid lo)
-        (px-v (+ c 9) (+ br 5) lo mid)))
-    ; ── tail ──
-    (cat-draw-tail! c br fc hi mid lo phase)
-    ; tiger stripes
+        (px-v (+ c e1) (+ br 1) sclera pupil)
+        (px-v (+ c e2) (+ br 1) sclera pupil)
+        ; micro highlight
+        (px-v (+ c e1) (+ br 1) (rgb 255 255 255) pupil)))
+
+    ; ── row 2: muzzle + torso ──
+    (px-v c (+ br 2) lo mid)
+    (px-v (+ c 1) (+ br 2) mid belly)
+    (px-v (+ c 2) (+ br 2) belly mid)
+    ; nose / mouth (center)
+    (if (string=? fc "up")
+        (px-v (+ c 3) (+ br 1) nose mid)
+      (px-v (+ c 3) (+ br 2) nose mouth))
+    (px-v (+ c 4) (+ br 2)
+          (if (string=? pose "eat") food belly) mid)
+    (px-v (+ c 5) (+ br 2) belly mid)
+    (px-v (+ c 6) (+ br 2) mid lo)
+    ; side snout peek when facing L/R
+    (if (string=? fc "right")
+        (begin
+          (px-v (+ c 6) (+ br 1) mid nose)
+          (px-v (+ c 6) (+ br 2) nose mouth))
+      (if (string=? fc "left")
+          (begin
+            (px-v c (+ br 1) nose mid)
+            (px-v c (+ br 2) mouth nose))
+        #t))
+
+    ; ── row 3: paws + tail ──
+    (if (or (= (modulo phase 2) 0) sleep?)
+        (begin
+          (px-v (+ c 1) (+ br 3) mid lo)
+          (px-v (+ c 2) (+ br 3) lo mid)
+          (px-v (+ c 4) (+ br 3) mid lo)
+          (px-v (+ c 5) (+ br 3) lo mid))
+      (begin
+        (px-v c (+ br 3) mid lo)
+        (px-v (+ c 1) (+ br 3) lo mid)
+        (px-v (+ c 5) (+ br 3) mid lo)
+        (px-v (+ c 6) (+ br 3) lo mid)))
+    ; belly shadow mid-paw
+    (px-v (+ c 3) (+ br 3) belly lo)
+
+    ; tail — compact, opposite of facing
+    (cond
+      ((string=? fc "right")
+       (begin
+         (px-v c (+ br 2) mid lo)
+         (px-v c (+ br 3 wag) hi mid)))
+      ((string=? fc "left")
+       (begin
+         (px-v (+ c 6) (+ br 2) mid lo)
+         (px-v (+ c 6) (+ br 3 wag) hi mid)))
+      ((string=? fc "up")
+       (begin
+         (px-v (+ c 6) (+ br 3) mid lo)
+         (px-v (+ c 6) (+ br 2 wag) hi mid)))
+      (else
+       (begin
+         (px-v (+ c 6) (+ br 1) mid lo)
+         (px-v (+ c 6) (+ br wag) hi mid))))
+
+    ; tiger stripes (tiny)
     (if (= version 2)
         (begin
-          (px-v (+ c 4) (+ br 1) (pal-acc pal) mid)
-          (px-v (+ c 7) (+ br 1) mid (pal-acc pal))
-          (px-v (+ c 4) (+ br 4) (pal-acc pal) lo)
-          (px-v (+ c 7) (+ br 4) lo (pal-acc pal)))
+          (px-v (+ c 2) (+ br 1) (pal-acc pal) mid)
+          (px-v (+ c 4) (+ br 2) mid (pal-acc pal)))
       #t)
-    ; dragon cheek sparkle
+    ; dragon sparkle
     (if (= version 4)
         (begin
-          (px-v (+ c 1) (+ br 1) spark acc)
-          (px-v (+ c 10) (+ br 1) acc spark))
+          (px-v c br spark acc)
+          (px-v (+ c 6) br acc spark))
       #t)
-    ; sleep Zzz
+    ; sleep Z
     (if sleep?
-        (begin
-          (px-v (+ c 11) br zzz (rgb 100 140 200))
-          (px-v (+ c 12) (+ br 1) (rgb 200 220 255) zzz)
-          (px-v (+ c 11) (+ br 2) zzz (rgb 80 100 160)))
+        (px-v (+ c 6) br zzz (rgb 110 145 205))
       #t)
     ; evolve sparkles
     (if (string=? pose "evolve")
         (begin
           (px-v c br spark (rgb 255 200 80))
-          (px-v (+ c 11) br (rgb 255 200 80) spark)
-          (px-v (+ c 1) (+ br 2) spark hi)
-          (px-v (+ c 10) (+ br 2) hi spark)
-          (px-v (+ c 5) (- br 1) spark spark))
+          (px-v (+ c 6) br (rgb 255 200 80) spark)
+          (px-v (+ c 3) (- br 1) spark spark))
       #t)
-    ; eat food blob
+    ; eat crumb
     (if (string=? pose "eat")
-        (begin
-          (px-v (+ c 5) (+ br 5) food food2)
-          (px-v (+ c 6) (+ br 5) food2 food)
-          (px-v (+ c 5) (+ br 3) food mouth))
+        (px-v (+ c 3) (+ br 3) food food2)
       #t)
-    ; fight slash in face direction
+    ; fight slash (short)
     (if (string=? pose "fight")
         (cond
           ((string=? fc "right")
            (begin
-             (px-v (+ c 12) (+ br 1) slash slash2)
-             (px-v (+ c 13) (+ br 2) slash2 slash)
-             (px-v (+ c 12) (+ br 3) slash (rgb 255 120 40))))
+             (px-v (+ c 7) (+ br 1) slash slash2)
+             (px-v (+ c 7) (+ br 2) slash2 slash)))
           ((string=? fc "left")
            (begin
              (px-v (- c 1) (+ br 1) slash2 slash)
-             (px-v (- c 2) (+ br 2) slash slash2)
-             (px-v (- c 1) (+ br 3) (rgb 255 120 40) slash)))
+             (px-v (- c 1) (+ br 2) slash slash2)))
           ((string=? fc "up")
-           (begin
-             (px-v (+ c 5) (- br 1) slash slash2)
-             (px-v (+ c 6) (- br 2) slash2 slash)))
+           (px-v (+ c 3) (- br 1) slash slash2))
           (else
-           (begin
-             (px-v (+ c 5) (+ br 6) slash slash2)
-             (px-v (+ c 6) (+ br 7) slash2 slash))))
+           (px-v (+ c 3) (+ br 4) slash slash2)))
       #t)
     #t))
 

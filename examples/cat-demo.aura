@@ -28,8 +28,9 @@
 (define SCENE-Y0 3)
 (define SCENE-Y1 18)
 (define PROMPT-Y 20)
-(define CAT-W 12)
-(define CAT-H 6)
+; Compact refined cat (~7×4 half-block cells; was 12×6)
+(define CAT-W 7)
+(define CAT-H 4)
 
 ; Clamp n into [lo, hi]
 (define (clamp-n n lo hi)
@@ -139,7 +140,7 @@
 (define (draw-speech! pet cat-x cat-y frame-n)
   (let ((pose (anim-kind))
         (blink (and (string=? (anim-kind) "idle") (= (modulo frame-n 6) 5))))
-    (draw-text cat-x (+ cat-y 5)
+    (draw-text cat-x (+ cat-y CAT-H)
                (string-append "(" (pose-face pose blink (game-mood-kid pet)) ")")
                SPEECH-BUBBLE BG)
     (draw-text 1 SCENE-Y1
