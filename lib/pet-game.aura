@@ -160,8 +160,8 @@
      (set! *last-act* "idle")
      (cons #t pet))))
 
-; Movement feedback (no vitals change).
+; Movement: keep silent (no per-step string-append / log). Heap churn from
+; speech+log on every arrow was a suspect for random exits after eat+move.
 (define (game-on-move!)
-  (set! *speech* (edsl-speech "move"))
   (set! *last-act* "move")
   #t)

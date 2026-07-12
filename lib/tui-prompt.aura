@@ -204,27 +204,31 @@
       (string=? ch "←")
       (prompt-u8-3? ch 226 134 144)
       (string=? ch "Left")
-      (and (= (string-length ch) 1) (string=? ch "a"))))
+      (string=? ch "a") (string=? ch "A")
+      ; broken CSI fallback: lone final byte
+      (string=? ch "D")))
 
 (define (prompt-is-right? ch)
   (or (= (prompt-ch-code ch) 6)
       (string=? ch "→")
       (prompt-u8-3? ch 226 134 146)
       (string=? ch "Right")
-      (and (= (string-length ch) 1) (string=? ch "d"))))
+      (string=? ch "d") (string=? ch "D")
+      (string=? ch "C")))
 
 (define (prompt-is-up? ch)
   (or (string=? ch "↑")
       (prompt-u8-3? ch 226 134 145)
       (string=? ch "Up")
-      (and (= (string-length ch) 1) (string=? ch "w"))))
+      (string=? ch "w") (string=? ch "W")
+      (string=? ch "A")))
 
 (define (prompt-is-down? ch)
   (or (string=? ch "↓")
       (prompt-u8-3? ch 226 134 147)
       (string=? ch "Down")
-      (and (= (string-length ch) 1) (string=? ch "s"))))
-; Home U+21F1 E2 87 B1 ; End U+21F2 E2 87 B2
+      (string=? ch "s") (string=? ch "S")
+      (string=? ch "B"))); Home U+21F1 E2 87 B1 ; End U+21F2 E2 87 B2
 (define (prompt-is-home? ch)
   (or (= (prompt-ch-code ch) 1)
       (string=? ch "Home")
