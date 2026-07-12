@@ -1,24 +1,37 @@
 ; lib/tui-prompt.aura — bottom command line (Grok Build–style).
 ;
-; No (require) here: uses host tui:* only so load is safe after lifecycle.
-; State is module-level buffers; draw with (prompt-draw! ...).
+; Features:
+;   - real cursor index (not just trailing _)
+;   - Mac/PC Backspace: code 127 (DEL) and 8 (BS) — NOT \x escapes (Aura
+;     does not parse \xHH; "\x7f" is the 3-char string "x7f")
+;   - Emacs-style line editing
+;   - left/right arrows, Home/End when terminal sends them
+;
+; Emacs map (empty-line 1/2/3/e/q still hotkeys):
+;   C-a beginning   C-e end
+;   C-b left        C-f right
+;   C-d delete-fwd  C-h / DEL / BS backspace
+;   C-k kill-to-end C-u kill-line
+;   C-w kill-word-back
+;   Enter submit
 ;
 ; API:
-;   (prompt-init! y)           ; log row y, input row y+1
+;   (prompt-init! y)
 ;   (prompt-set-log! msg)
-;   (prompt-buf)
-;   (prompt-handle e)          ; → "quit" | "submit" | "edit" | "hot" | #f
-;   (prompt-take-submit!)      ; string just submitted (after "submit")
-;   (prompt-hot)               ; last hotkey cmd ("1"|"2"|"3"|"e") or ""
-;   (prompt-draw! log-fg in-fg bg)
+;   (prompt-buf) (prompt-log) (prompt-hot) (prompt-cursor)
+;   (prompt-handle e) → "quit"|"submit"|"edit"|"hot"|#f
+;   (prompt-take-submit!)
+;   (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
 
 (define *prompt-y* 0)
 (define *prompt-buf* "x")
-(define *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  type help")
+(define *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  | C-a/e/b/f/d/k/u  ←→")
 (define *prompt-submit* "x")
 (define *prompt-hot* "x")
+(define *prompt-cursor* 0)
+(define *prompt-width* 44)
 
-; Fresh empty string — avoid "" literals (heap slots can be clobbered by later require).
+; Fresh empty — avoid "" literals (require can clobber empty string heap slots).
 (define (prompt-empty)
   (substring "x" 0 0))
 
@@ -27,7 +40,8 @@
   (set! *prompt-buf* (prompt-empty))
   (set! *prompt-submit* (prompt-empty))
   (set! *prompt-hot* (prompt-empty))
-  (set! *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  type help")
+  (set! *prompt-cursor* 0)
+  (set! *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  | emacs: C-a/e/b/f/d/k  ←→")
   #t)
 
 (define (prompt-set-log! msg)
@@ -37,54 +51,191 @@
 (define (prompt-buf) *prompt-buf*)
 (define (prompt-log) *prompt-log*)
 (define (prompt-hot) *prompt-hot*)
+(define (prompt-cursor) *prompt-cursor*)
 
 (define (prompt-take-submit!)
   (define s *prompt-submit*)
-  (set! *prompt-submit* "")
+  (set! *prompt-submit* (prompt-empty))
+  (set! *prompt-cursor* 0)
   s)
 
 (define (prompt-clear-buf!)
   (set! *prompt-buf* (prompt-empty))
+  (set! *prompt-cursor* 0)
   #t)
 
-(define (prompt-backspace!)
+; First byte/code of a 1-unit string, else -1. Aura strings are byte-oriented.
+(define (prompt-ch-code ch)
+  (if (and (string? ch) (= (string-length ch) 1))
+      (char->integer (car (string->list ch)))
+      -1))
+
+(define (prompt-clamp-cursor!)
   (let ((n (string-length *prompt-buf*)))
-    (if (<= n 0)
+    (if (< *prompt-cursor* 0)
+        (set! *prompt-cursor* 0)
+      (if (> *prompt-cursor* n)
+          (set! *prompt-cursor* n)
+        #t))))
+
+(define (prompt-left-part)
+  (if (<= *prompt-cursor* 0)
+      (prompt-empty)
+    (substring *prompt-buf* 0 *prompt-cursor*)))
+
+(define (prompt-right-part)
+  (let ((n (string-length *prompt-buf*)))
+    (if (>= *prompt-cursor* n)
+        (prompt-empty)
+      (substring *prompt-buf* *prompt-cursor* n))))
+
+(define (prompt-insert! ch)
+  (if (>= (string-length *prompt-buf*) 40)
+      #f
+    (begin
+      (set! *prompt-buf*
+        (string-append (prompt-left-part) ch (prompt-right-part)))
+      (set! *prompt-cursor* (+ *prompt-cursor* 1))
+      #t)))
+
+(define (prompt-backspace!)
+  (if (<= *prompt-cursor* 0)
+      #f
+    (let ((c *prompt-cursor*)
+          (n (string-length *prompt-buf*)))
+      (set! *prompt-buf*
+        (string-append
+          (if (<= c 1) (prompt-empty) (substring *prompt-buf* 0 (- c 1)))
+          (if (>= c n) (prompt-empty) (substring *prompt-buf* c n))))
+      (set! *prompt-cursor* (- c 1))
+      #t)))
+
+(define (prompt-delete-fwd!)
+  (let ((c *prompt-cursor*)
+        (n (string-length *prompt-buf*)))
+    (if (>= c n)
         #f
       (begin
         (set! *prompt-buf*
-          (if (<= n 1) (prompt-empty) (substring *prompt-buf* 0 (- n 1))))
+          (string-append
+            (if (<= c 0) (prompt-empty) (substring *prompt-buf* 0 c))
+            (if (>= (+ c 1) n) (prompt-empty) (substring *prompt-buf* (+ c 1) n))))
         #t))))
 
-(define (prompt-append! ch)
-  (if (> (string-length *prompt-buf*) 40)
-      #f
-    (begin
-      (set! *prompt-buf* (string-append *prompt-buf* ch))
-      #t)))
+(define (prompt-kill-to-end!)
+  (set! *prompt-buf* (prompt-left-part))
+  (prompt-clamp-cursor!)
+  #t)
 
-; Single-char ASCII printable (avoid string->list / char->integer churn).
+(define (prompt-kill-line!)
+  (prompt-clear-buf!)
+  #t)
+
+; Kill word left of cursor (C-w).
+(define (prompt-kill-word-back!)
+  (if (<= *prompt-cursor* 0)
+      #f
+    (let* ((left (prompt-left-part))
+           (right (prompt-right-part))
+           (n (string-length left)))
+      ; skip trailing spaces
+      (let loop ((i n))
+        (if (and (> i 0)
+                 (string=? (substring left (- i 1) i) " "))
+            (loop (- i 1))
+          (let loop2 ((j i))
+            (if (and (> j 0)
+                     (not (string=? (substring left (- j 1) j) " ")))
+                (loop2 (- j 1))
+              (begin
+                (set! *prompt-buf*
+                  (string-append
+                    (if (<= j 0) (prompt-empty) (substring left 0 j))
+                    right))
+                (set! *prompt-cursor* j)
+                #t))))))))
+
+(define (prompt-move! delta)
+  (set! *prompt-cursor* (+ *prompt-cursor* delta))
+  (prompt-clamp-cursor!)
+  #t)
+
+(define (prompt-to-start!)
+  (set! *prompt-cursor* 0)
+  #t)
+
+(define (prompt-to-end!)
+  (set! *prompt-cursor* (string-length *prompt-buf*))
+  #t)
+
+; Printable ASCII only (space..~). Control bytes and DEL are never printable.
 (define (prompt-printable? ch)
-  (and (string? ch)
-       (= (string-length ch) 1)
-       (not (string=? ch "\n"))
-       (not (string=? ch "\r"))
-       (not (string=? ch "\x7f"))
-       (not (string=? ch "\x08"))
-       (not (string=? ch "\x1b"))))
+  (let ((c (prompt-ch-code ch)))
+    (and (>= c 32) (<= c 126))))
 
 (define (prompt-is-enter? ch)
-  (or (string=? ch "\n") (string=? ch "\r") (string=? ch "\x0d") (string=? ch "Enter")))
+  (let ((c (prompt-ch-code ch)))
+    (or (= c 10) (= c 13)
+        (string=? ch "Enter"))))
 
+; Mac Delete / Backspace: 127 (DEL). Also BS=8, C-h=8.
 (define (prompt-is-bs? ch)
-  (or (string=? ch "\x7f") (string=? ch "\x08") (string=? ch "Backspace")))
+  (let ((c (prompt-ch-code ch)))
+    (or (= c 127) (= c 8)
+        (string=? ch "Backspace"))))
+
+; 3-byte UTF-8 equality (Aura strings are byte-oriented).
+(define (prompt-u8-3? ch b0 b1 b2)
+  (and (= (string-length ch) 3)
+       (let ((xs (string->list ch)))
+         (and (= (char->integer (car xs)) b0)
+              (= (char->integer (car (cdr xs))) b1)
+              (= (char->integer (car (cdr (cdr xs)))) b2)))))
+
+; Forward delete: C-d or CSI 3~ → U+2326 (E2 8C A6)
+(define (prompt-is-del-fwd? ch)
+  (or (= (prompt-ch-code ch) 4)
+      (string=? ch "Delete")
+      (prompt-u8-3? ch 226 140 166)))
+
+; ← U+2190 = E2 86 90 ; → U+2192 = E2 86 92
+(define (prompt-is-left? ch)
+  (or (= (prompt-ch-code ch) 2)
+      (string=? ch "←")
+      (prompt-u8-3? ch 226 134 144)
+      (string=? ch "Left")))
+
+(define (prompt-is-right? ch)
+  (or (= (prompt-ch-code ch) 6)
+      (string=? ch "→")
+      (prompt-u8-3? ch 226 134 146)
+      (string=? ch "Right")))
+
+; Home U+21F1 E2 87 B1 ; End U+21F2 E2 87 B2
+(define (prompt-is-home? ch)
+  (or (= (prompt-ch-code ch) 1)
+      (string=? ch "Home")
+      (prompt-u8-3? ch 226 135 177)))
+
+(define (prompt-is-end? ch)
+  (or (= (prompt-ch-code ch) 5)
+      (string=? ch "End")
+      (prompt-u8-3? ch 226 135 178)))
+
+(define (prompt-is-kill-end? ch)
+  (= (prompt-ch-code ch) 11))     ; C-k
+
+(define (prompt-is-kill-line? ch)
+  (= (prompt-ch-code ch) 21))     ; C-u
+
+(define (prompt-is-kill-word? ch)
+  (= (prompt-ch-code ch) 23))     ; C-w
 
 (define (prompt-is-hot? ch)
   (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
       (string=? ch "e") (string=? ch "E")))
 
-; Handle one tui:read-event result.
-; Returns: "quit" | "submit" | "hot" | "edit" | #f
+; Handle one tui:read-event. → "quit"|"submit"|"edit"|"hot"|#f
 (define (prompt-handle e)
   (if (not (pair? e))
       #f
@@ -98,9 +249,34 @@
             ((prompt-is-enter? ch)
              (set! *prompt-submit* *prompt-buf*)
              (set! *prompt-buf* (prompt-empty))
+             (set! *prompt-cursor* 0)
              "submit")
             ((prompt-is-bs? ch)
              (prompt-backspace!)
+             "edit")
+            ((prompt-is-del-fwd? ch)
+             (prompt-delete-fwd!)
+             "edit")
+            ((prompt-is-left? ch)
+             (prompt-move! -1)
+             "edit")
+            ((prompt-is-right? ch)
+             (prompt-move! 1)
+             "edit")
+            ((prompt-is-home? ch)
+             (prompt-to-start!)
+             "edit")
+            ((prompt-is-end? ch)
+             (prompt-to-end!)
+             "edit")
+            ((prompt-is-kill-end? ch)
+             (prompt-kill-to-end!)
+             "edit")
+            ((prompt-is-kill-line? ch)
+             (prompt-kill-line!)
+             "edit")
+            ((prompt-is-kill-word? ch)
+             (prompt-kill-word-back!)
              "edit")
             ((and empty? (or (string=? ch "q") (string=? ch "Q")))
              "quit")
@@ -108,11 +284,10 @@
              (set! *prompt-hot* (if (string=? ch "E") "e" ch))
              "hot")
             ((prompt-printable? ch)
-             (prompt-append! ch)
+             (prompt-insert! ch)
              "edit")
             (else #f)))))))
 
-; tui:cell only paints the first codepoint — always emit one char per cell.
 (define (prompt-put-str! col row str fg bg attr)
   (let ((n (string-length str)))
     (let loop ((i 0))
@@ -121,9 +296,31 @@
           (tui:cell (+ col i) row (substring str i (+ i 1)) fg bg attr)
           (loop (+ i 1)))))))
 
-(define (prompt-draw! log-fg in-fg bg)
-  (prompt-put-str! 1 *prompt-y* *prompt-log* log-fg bg 0)
-  (prompt-put-str! 1 (+ *prompt-y* 1) "> " in-fg bg 1)
-  (prompt-put-str! 3 (+ *prompt-y* 1) *prompt-buf* in-fg bg 1)
-  (prompt-put-str! (+ 3 (string-length *prompt-buf*)) (+ *prompt-y* 1) "_" in-fg bg 1)
-  #t)
+; Clear a horizontal run with spaces (erase stale glyphs after shrink).
+(define (prompt-clear-run! col row n fg bg)
+  (let loop ((i 0))
+    (if (>= i n) #t
+      (begin
+        (tui:cell (+ col i) row " " fg bg 0)
+        (loop (+ i 1))))))
+
+(define (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
+  (let* ((row (+ *prompt-y* 1))
+         (left (prompt-left-part))
+         (right (prompt-right-part))
+         (cur-ch (if (= (string-length right) 0)
+                     " "
+                   (substring right 0 1)))
+         (rest (if (<= (string-length right) 1)
+                   (prompt-empty)
+                 (substring right 1 (string-length right))))
+         (base 3))
+    (prompt-put-str! 1 *prompt-y* *prompt-log* log-fg bg 0)
+    ; wipe input line then redraw
+    (prompt-clear-run! 1 row *prompt-width* in-fg bg)
+    (prompt-put-str! 1 row "> " in-fg bg 1)
+    (prompt-put-str! base row left in-fg bg 0)
+    ; block cursor (reverse colors) under current column
+    (tui:cell (+ base (string-length left)) row cur-ch cursor-fg cursor-bg 1)
+    (prompt-put-str! (+ base (string-length left) 1) row rest in-fg bg 0)
+    #t))

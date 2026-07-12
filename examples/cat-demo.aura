@@ -81,7 +81,8 @@
   (draw-text cat-x (+ cat-y 5)
              (string-append "(" (pet-face pet (= (modulo frame-n 6) 5)) ")")
              NEON-PINK BG)
-  (prompt-draw! HUD-DIM IN-FG BG)
+  ; cursor: black on white block
+  (prompt-draw! HUD-DIM IN-FG BG 0 16777215)
   (tui:present)
   #t)
 
