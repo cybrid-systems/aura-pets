@@ -152,7 +152,8 @@
          (phase (anim-phase))
          (draw-y (+ cat-y (anim-hop)))
          (blink (and (string=? pose "idle") (= (modulo frame-n 6) 5))))
-    (tui:clear BG BG)
+    ; Sky via C++ clear (fast); world-draw-bg only paints floor + sparse FX.
+    (tui:clear (bg-base-sky) (bg-base-sky))
     (world-draw-bg! W H SCENE-Y0 SCENE-Y1 frame-n)
     (world-draw-npcs! frame-n)
     (battle-draw-npc-hud! frame-n)
@@ -288,17 +289,20 @@
         #t)
       #t)))
 
-; ~60Hz poll; drain a few events so OS key-repeat feels continuous.
+; Input first, non-blocking drain, short wait only after empty queue.
+; (Long timeout after a slow frame made keys feel dead.)
 (define (play-drain-input!)
   (set! *moved-this-frame* #f)
-  (play-handle-event! (tui:read-event 16))
+  ; Drain whatever is already pending (no sleep).
   (let loop ((n 0))
-    (if (>= n 5)
+    (if (>= n 12)
         #t
       (let ((e (tui:read-event 0)))
         (if e
             (begin (play-handle-event! e) (loop (+ n 1)))
-          #t)))))
+          #t))))
+  ; Brief block so idle loop is not a hot spin (~8ms).
+  (play-handle-event! (tui:read-event 8)))
 
 ; Demo frame state (host while — no named-let recursion).
 (define *d-i* 0)
@@ -483,14 +487,16 @@
         #f))))
 
 (define (play-step!)
-  ; 1) Apply deferred NL/worldgen FIRST (shallow stack — avoids SIGSEGV).
-  (play-poll-async!)
-  ; 2) Input
+  ; 1) Input FIRST so keys stay responsive even if draw is busy.
   (play-drain-input!)
+  ; 2) Deferred NL/worldgen (cheap poll).
+  (play-poll-async!)
   (anim-tick!)
   (pet-render-sync)
-  ; 3) Simulate
-  (world-tick-npcs! *p-frame* W SCENE-Y0 SCENE-Y1)
+  ; 3) Simulate (npc AI every other frame to save CPU)
+  (if (= (modulo *p-frame* 2) 0)
+      (world-tick-npcs! *p-frame* W SCENE-Y0 SCENE-Y1)
+    #t)
   (battle-set-bounds! 0 SCENE-Y0 W SCENE-Y1)
   (battle-tick! *p-pet* *p-x* *p-y*)
   ; 4) Draw

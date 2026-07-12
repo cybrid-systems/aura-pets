@@ -438,13 +438,18 @@
     (catch (e) (begin (world-reset!) #f))))
 
 ; ── Drawing ──
+;
+; PERF: full per-cell Scheme color math is too slow (125x30 ≈ 4k eval_flat
+; calls/frame → unresponsive keys). Strategy:
+;   1) solid tui:clear with sky
+;   2) fill floor as a few solid rows (same color)
+;   3) sparse decorations (grid lines / stars / rain / grass) only
+; Host (while) still used where loops would be long.
 
 (define (world-px col row top bot)
   (tui:pixel col row top bot)
   #t)
 
-; Host (while) fill — nested Scheme loops blow eval_flat stack on big TTY
-; (e.g. 125x33 ≈ 3000+ recursive frames → SIGSEGV).
 (define *bg-i* 0)
 (define *bg-w* 80)
 (define *bg-y0* 3)
@@ -453,132 +458,144 @@
 (define *bg-floor-y* 18)
 (define *bg-frame* 0)
 (define *bg-rows* 16)
+(define *bg-x* 0)
+(define *bg-y* 0)
+(define *bg-c* 0)
+(define *bg-c2* 0)
 
-; Tiny hash for procedural dots (no recursion).
-(define (bg-hash x y f)
-  (modulo (+ (* x 17) (* y 31) (* f 13) (* x y 3)) 64))
+; Fill one horizontal run [x0,x1) at row y with solid color (fast).
+(define (bg-hfill! x0 x1 y c)
+  (set! *bg-x* x0)
+  (set! *bg-y* y)
+  (set! *bg-c* c)
+  (while (lambda () (< *bg-x* x1))
+         (lambda ()
+           (world-px *bg-x* *bg-y* *bg-c* *bg-c*)
+           (set! *bg-x* (+ *bg-x* 1)))))
 
-; Unpack helpers for soft gradients (r/g/b 0..255).
-(define (bg-r c) (quotient c 65536))
-(define (bg-g c) (quotient (modulo c 65536) 256))
-(define (bg-b c) (modulo c 256))
-(define (bg-lerp a b t256)
-  ; t256 in 0..256
-  (quotient (+ (* a (- 256 t256)) (* b t256)) 256))
-(define (bg-mix ca cb t256)
-  (world-rgb (bg-lerp (bg-r ca) (bg-r cb) t256)
-             (bg-lerp (bg-g ca) (bg-g cb) t256)
-             (bg-lerp (bg-b ca) (bg-b cb) t256)))
+; Fill rectangular band y0..y1-1, full width.
+(define (bg-vband! w y0 y1 c)
+  (set! *bg-y* y0)
+  (set! *bg-c* c)
+  (set! *bg-w* w)
+  (while (lambda () (< *bg-y* y1))
+         (lambda ()
+           (bg-hfill! 0 *bg-w* *bg-y* *bg-c*)
+           (set! *bg-y* (+ *bg-y* 1)))))
 
-; Per-cell (top . bot) colors by style — patterned, not hard stripes.
-(define (bg-cell-colors x y)
-  (let* ((fy *bg-floor-y*)
-         (y0 *bg-y0*)
-         (h (if (<= *bg-rows* 0) 1 *bg-rows*))
-         (t256 (quotient (* (- y y0) 256) h))
-         (f *bg-frame*)
-         (noise (bg-hash x y f))
-         (st *bg-style*))
-    (cond
-      ; ── cyber / matrix: dark void + neon grid (rain drawn as cells after) ──
-      ((or (string=? st "cyber") (string=? st "matrix"))
-       (let* ((gx (= (modulo x 10) 0))
-              (gy (= (modulo y 5) 0))
-              (pulse (modulo (+ f (quotient x 3)) 8))
-              (g (if gx 45 (if gy 28 (+ 6 (modulo noise 12)))))
-              (base (world-rgb 0 g (+ 12 (modulo noise 18))))
-              (base2 (world-rgb 0 (+ 4 (modulo noise 8)) 20))
-              (neon (world-rgb 0 (+ 80 (* pulse 8)) 60)))
-         (if (or gx gy)
-             (cons neon base)
-           (if (>= y fy)
-               (cons (world-rgb 8 12 28) (world-rgb 4 8 18))
-             (cons base base2)))))
-      ; ── night stars: deep sky + twinkles ──
-      ((string=? st "stars")
-       (let* ((sky (bg-mix (world-rgb 4 6 24) (world-rgb 12 10 40) t256))
-              (sky2 (bg-mix (world-rgb 2 4 18) sky 128))
-              (tw (and (< noise 3) (< (modulo (+ x (* y 3) f) 11) 2))))
-         (if (>= y fy)
-             (cons (world-rgb 18 20 40) (world-rgb 10 12 28))
-           (if tw
-               (cons *w-star* sky)
-             (cons sky sky2)))))
-      ; ── ocean / beach: horizon band + wave noise ──
-      ((string=? st "ocean")
-       (let* ((horizon (- fy 3))
-              (wave (modulo (+ x (quotient f 2) (* y 2)) 7)))
-         (cond
-           ((>= y fy)
-            (cons (world-rgb 200 180 120) (world-rgb 170 150 100)))
-           ((>= y horizon)
-            (cons (world-rgb (+ 20 (* wave 8)) (+ 90 (* wave 6)) 180)
-                  (world-rgb 20 70 150)))
-           (else
-            (let ((sky (bg-mix (world-rgb 80 160 230) (world-rgb 180 220 255) t256)))
-              (cons sky (bg-mix sky (world-rgb 100 180 240) 80)))))))
-      ; ── city: skyline blocks near floor ──
-      ((string=? st "city")
-       (let* ((build-h (modulo (+ (* x 5) 3) 6))
-              (skyline (- fy build-h))
-              (win (and (= (modulo x 2) 0) (= (modulo y 2) 0)
-                        (< (modulo (+ x y f) 5) 2)))
-              (sky (bg-mix (world-rgb 20 25 50) (world-rgb 60 40 70) t256)))
-         (cond
-           ((>= y fy)
-            (cons (world-rgb 30 30 40) (world-rgb 20 20 28)))
-           ((>= y skyline)
-            (if win
-                (cons (world-rgb 255 220 80) (world-rgb 40 40 55))
-              (cons (world-rgb 35 38 55) (world-rgb 25 28 42))))
-           (else (cons sky (bg-mix sky (world-rgb 30 30 50) 100))))))
-      ; ── grid: soft cyber grid on dark ──
-      ((string=? st "grid")
-       (let ((gx (= (modulo x 6) 0))
-             (gy (= (modulo y 3) 0)))
-         (if (or gx gy)
-             (cons (world-rgb 0 90 110) (world-rgb 0 40 55))
-           (cons (world-rgb 5 12 22) (world-rgb 3 8 16)))))
-      ; ── sunset: warm gradient sky → green ground with grass dots ──
-      ((string=? st "sunset")
-       (let* ((sky (bg-mix (world-rgb 40 30 90) (world-rgb 255 120 60) t256))
-              (sky2 (bg-mix (world-rgb 90 50 70) (world-rgb 255 180 90) t256))
-              (grass-dot (and (>= y (- fy 1)) (< noise 18))))
-         (if (>= y fy)
-             (if grass-dot
-                 (cons (world-rgb 80 160 70) (world-rgb 50 100 50))
-               (cons *w-floor* *w-floor2*))
-           (if (and (< noise 2) (< y (+ y0 3)))
-               (cons *w-star* sky)
-             (cons sky sky2)))))
-      ; ── meadow (default): soft vertical blend + grass / flower noise ──
-      (else
-       (let* ((sky (bg-mix *w-sky* *w-sky2* t256))
-              (sky2 (bg-mix *w-sky2* *w-floor* (quotient t256 2)))
-              (grass-dot (and (>= y (- fy 2)) (< noise 20)))
-              (flower (and (>= y (- fy 2)) (= noise 1))))
-         (cond
-           ((>= y fy)
-            (if flower
-                (cons (world-rgb 255 120 160) (world-rgb 255 200 80))
-              (if grass-dot
-                  (cons (world-rgb 70 150 70) *w-floor2*)
-                (cons *w-floor* *w-floor2*))))
-           (else
-            (if (and (< noise 2) (< y (+ y0 4)))
-                (cons *w-star* sky)
-              (cons sky sky2)))))))))
+; Vertical line every step cols (cyber/grid).
+(define (bg-vlines! w y0 y1 step c)
+  (set! *bg-x* 0)
+  (set! *bg-c* c)
+  (while (lambda () (< *bg-x* w))
+         (lambda ()
+           (set! *bg-y* y0)
+           (while (lambda () (< *bg-y* y1))
+                  (lambda ()
+                    (world-px *bg-x* *bg-y* *bg-c* *bg-c*)
+                    (set! *bg-y* (+ *bg-y* 1))))
+           (set! *bg-x* (+ *bg-x* step)))))
 
-; Matrix-style rain (cyber cat) — short list, named-let OK (~24 drops).
+; Horizontal line every step rows.
+(define (bg-hlines! w y0 y1 step c)
+  (set! *bg-y* y0)
+  (set! *bg-c* c)
+  (while (lambda () (< *bg-y* y1))
+         (lambda ()
+           (bg-hfill! 0 w *bg-y* *bg-c*)
+           (set! *bg-y* (+ *bg-y* step)))))
+
+; Sparse stars (~16) — not per-cell hash.
+(define (bg-draw-stars! w y0 fy frame)
+  (let ((c *w-star*)
+        (sky *w-sky*))
+    ; Fixed offsets — twinkle by skipping some frames
+    (if (= (modulo frame 2) 0)
+        (begin
+          (world-px (modulo 5 w) (+ y0 1) c sky)
+          (world-px (modulo 18 w) (+ y0 2) c sky)
+          (world-px (modulo 35 w) (+ y0 1) c sky)
+          (world-px (modulo 52 w) (+ y0 3) c sky)
+          (world-px (modulo 70 w) (+ y0 1) c sky)
+          (world-px (modulo 88 w) (+ y0 2) c sky)
+          (world-px (modulo 105 w) (+ y0 1) c sky)
+          (world-px (modulo 12 w) (+ y0 4) c sky))
+      (begin
+        (world-px (modulo 9 w) (+ y0 2) c sky)
+        (world-px (modulo 28 w) (+ y0 1) c sky)
+        (world-px (modulo 44 w) (+ y0 3) c sky)
+        (world-px (modulo 61 w) (+ y0 2) c sky)
+        (world-px (modulo 77 w) (+ y0 1) c sky)
+        (world-px (modulo 96 w) (+ y0 2) c sky)
+        (world-px (modulo 22 w) (+ y0 3) c sky)
+        (world-px (modulo 55 w) (+ y0 4) c sky)))
+    #t))
+
+; Grass / flower dots only on floor rows (every 3rd cell).
+(define (bg-draw-ground-dots! w fy y1 frame)
+  (set! *bg-y* fy)
+  (while (lambda () (< *bg-y* y1))
+         (lambda ()
+           (set! *bg-x* (modulo frame 3))
+           (while (lambda () (< *bg-x* w))
+                  (lambda ()
+                    (let ((n (modulo (+ (* *bg-x* 17) (* *bg-y* 31)) 11)))
+                      (if (= n 0)
+                          (world-px *bg-x* *bg-y*
+                                    (world-rgb 80 160 70) *w-floor2*)
+                        (if (= n 1)
+                            (world-px *bg-x* *bg-y*
+                                      (world-rgb 255 120 160)
+                                      (world-rgb 255 200 80))
+                          #t)))
+                    (set! *bg-x* (+ *bg-x* 3))))
+           (set! *bg-y* (+ *bg-y* 1)))))
+
+; Ocean wave band: only 2 rows, cheap x pattern.
+(define (bg-draw-waves! w y frame)
+  (set! *bg-x* 0)
+  (while (lambda () (< *bg-x* w))
+         (lambda ()
+           (let ((wave (modulo (+ *bg-x* (quotient frame 2)) 5)))
+             (world-px *bg-x* y
+                       (world-rgb (+ 20 (* wave 10)) (+ 90 (* wave 8)) 180)
+                       (world-rgb 20 70 150))
+             (if (< (+ y 1) *bg-y1*)
+                 (world-px *bg-x* (+ y 1)
+                           (world-rgb 30 100 170) (world-rgb 20 80 150))
+               #t))
+           (set! *bg-x* (+ *bg-x* 1)))))
+
+; City skyline: every 2nd column, short towers only (cheap).
+(define (bg-draw-skyline! w fy frame)
+  (set! *bg-x* 0)
+  (set! *bg-c* (world-rgb 35 38 55))
+  (set! *bg-c2* (world-rgb 255 220 80))
+  (while (lambda () (< *bg-x* w))
+         (lambda ()
+           (let* ((bh (+ 2 (modulo (+ (* *bg-x* 5) 3) 4)))
+                  (y0 (- fy bh)))
+             (set! *bg-y* y0)
+             (while (lambda () (< *bg-y* fy))
+                    (lambda ()
+                      (if (and (= (modulo *bg-y* 2) 0)
+                               (= (modulo (+ *bg-x* frame) 4) 0))
+                          (world-px *bg-x* *bg-y* *bg-c2* *bg-c*)
+                        (world-px *bg-x* *bg-y* *bg-c* *bg-c*))
+                      (set! *bg-y* (+ *bg-y* 1)))))
+           (set! *bg-x* (+ *bg-x* 2)))))
+
+; Matrix rain — few drops only (cyber_cat uses ~28; we cap at 14).
 (define (bg-rain-init! w y0 y1)
-  (let ((n (if (< w 40) 12 (if (< w 80) 18 24))))
+  (let ((n (if (< w 50) 8 14)))
     (let loop ((i 0) (acc '()))
       (if (>= i n)
           (begin (set! *bg-rain* acc) (set! *bg-rain-ready* #t) #t)
         (loop (+ i 1)
-              (cons (list (modulo (* i 7) w)
-                          (+ y0 (modulo (* i 3) (if (<= (- y1 y0) 1) 1 (- y1 y0))))
-                          (+ 1 (modulo i 3))
+              (cons (list (modulo (* i 11) w)
+                          (+ y0 (modulo (* i 5)
+                                       (if (<= (- y1 y0) 1) 1 (- y1 y0))))
+                          (+ 1 (modulo i 2))
                           (+ 33 (modulo (* i 17) 90)))
                     acc))))))
 
@@ -592,8 +609,7 @@
                (y (car (cdr d)))
                (sp (car (cdr (cdr d))))
                (seed (car (cdr (cdr (cdr d)))))
-               (ny (+ y sp))
-               (h (if (<= (- y1 y0) 1) 1 (- y1 y0))))
+               (ny (+ y sp)))
           (loop (cdr ds)
                 (cons (list x
                             (if (>= ny y1) y0 ny)
@@ -622,9 +638,34 @@
             #t)
           (loop (cdr ds)))))))
 
+; Style → solid base colors (sky fill + floor band). Pattern is sparse overlay.
+(define (bg-base-sky)
+  (cond
+    ((or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
+     (world-rgb 0 8 18))
+    ((string=? *bg-style* "stars") (world-rgb 6 8 28))
+    ((string=? *bg-style* "ocean") (world-rgb 70 150 220))
+    ((string=? *bg-style* "city") (world-rgb 25 28 55))
+    ((string=? *bg-style* "grid") (world-rgb 5 12 22))
+    ((string=? *bg-style* "sunset") (world-rgb 90 45 70))
+    (else *w-sky*)))
+
+(define (bg-base-floor)
+  (cond
+    ((or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
+     (world-rgb 8 12 28))
+    ((string=? *bg-style* "stars") (world-rgb 16 18 36))
+    ((string=? *bg-style* "ocean") (world-rgb 200 180 120))
+    ((string=? *bg-style* "city") (world-rgb 28 28 38))
+    ((string=? *bg-style* "grid") (world-rgb 0 30 40))
+    (else *w-floor*)))
+
+; Caller should (tui:clear (bg-base-sky) ...) first — sky is free in C++.
+; We only paint floor + sparse overlays (keeps play loop responsive).
 (define (world-draw-bg! w h y0 y1 frame)
   (let ((floor-y (- y1 2))
-        (rows (- y1 y0)))
+        (rows (- y1 y0))
+        (fr (if (number? frame) frame 0)))
     (if (or (<= w 0) (<= rows 0))
         #t
       (begin
@@ -633,26 +674,37 @@
         (set! *bg-y1* y1)
         (set! *bg-floor-y* floor-y)
         (set! *bg-rows* rows)
-        (set! *bg-frame* (if (number? frame) frame 0))
-        (set! *bg-total* (* w rows))
-        (set! *bg-i* 0)
-        (while (lambda () (< *bg-i* *bg-total*))
-               (lambda ()
-                 (let* ((i *bg-i*)
-                        (x (modulo i *bg-w*))
-                        (y (+ *bg-y0* (quotient i *bg-w*)))
-                        (pair (bg-cell-colors x y)))
-                   (world-px x y (car pair) (cdr pair))
-                   (set! *bg-i* (+ i 1)))))
-        ; Cyber matrix rain overlay (animated glyphs like cyber_cat.aura)
-        (if (or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
-            (begin
-              (if (not *bg-rain-ready*)
-                  (bg-rain-init! w y0 y1)
-                #t)
-              (bg-rain-tick! w y0 y1)
-              (bg-rain-draw! *bg-frame*))
-          #t)
+        (set! *bg-frame* fr)
+        ; Floor only (2 rows) — not full-screen Scheme pixel loop
+        (bg-vband! w floor-y y1 (bg-base-floor))
+        ; Sparse overlays (O(w) or O(drops), not O(w*h) color math)
+        (cond
+          ((or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
+           (begin
+             ; few grid lines only (step large)
+             (bg-vlines! w y0 floor-y 12 (world-rgb 0 70 55))
+             (bg-hlines! w y0 floor-y 6 (world-rgb 0 45 40))
+             (if (not *bg-rain-ready*)
+                 (bg-rain-init! w y0 floor-y)
+               #t)
+             (bg-rain-tick! w y0 floor-y)
+             (bg-rain-draw! fr)))
+          ((string=? *bg-style* "grid")
+           (begin
+             (bg-vlines! w y0 y1 8 (world-rgb 0 80 100))
+             (bg-hlines! w y0 y1 4 (world-rgb 0 50 65))))
+          ((string=? *bg-style* "stars")
+           (bg-draw-stars! w y0 floor-y fr))
+          ((string=? *bg-style* "ocean")
+           (bg-draw-waves! w (- floor-y 2) fr))
+          ((string=? *bg-style* "city")
+           (bg-draw-skyline! w floor-y fr))
+          ((or (string=? *bg-style* "sunset") (string=? *bg-style* "meadow"))
+           (begin
+             (bg-draw-stars! w y0 floor-y fr)
+             (bg-draw-ground-dots! w floor-y y1 fr)))
+          (else
+           (bg-draw-ground-dots! w floor-y y1 fr)))
         (world-draw-props!)
         #t))))
 
