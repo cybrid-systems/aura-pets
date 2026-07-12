@@ -317,26 +317,26 @@
   (plog-start! (plog-path))
   (plog "info" (string-append "term=" (number->string W) "x" (number->string H)
                               " " (pet-snap *p-pet*)))
-  (let iter ()
-    (if (not *p-running*)
-      (begin
-        (plog-quit *p-quit* *p-frame* (pet-snap *p-pet*))
-        (prompt-set-log!
-          (string-append "bye (" *p-quit* ") log=" (plog-path)))
-        (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
-        (tui:raw-mode-off)
-        (tui:show-cursor)
-        (tui:shutdown)
-        (plog-end! *p-quit*)
-        "BYE")
-      (begin
-        (try
-          (play-step!)
-          (catch (err)
-            (begin
-              (play-stop! "exception")
-              (plog "ERROR" "play-step-exception")
-              (plog-flush!))))
-        (iter)))))
+  ; Host (while pred body) runs in C++ — no Scheme stack growth per frame.
+  ; Named-let (iter) caused SIGSEGV in eval_flat after ~800 frames.
+  (while (lambda () *p-running*)
+         (lambda ()
+           (try
+             (play-step!)
+             (catch (err)
+               (begin
+                 (play-stop! "exception")
+                 (plog "ERROR" "play-step-exception")
+                 (plog-flush!))))))
+  (plog-quit *p-quit* *p-frame* (pet-snap *p-pet*))
+  (prompt-set-log!
+    (string-append "bye (" *p-quit* ") log=" (plog-path)))
+  (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
+  (tui:raw-mode-off)
+  (tui:show-cursor)
+  (tui:shutdown)
+  (plog-end! *p-quit*)
+  "BYE")
+
 (define (play-entry)
   (cat-demo-interactive))
