@@ -31,6 +31,12 @@
 (define *prompt-cursor* 0)
 (define *prompt-width* 76)
 
+(define (prompt-set-width! n)
+  (set! *prompt-width* n)
+  #t)
+
+(define (prompt-width) *prompt-width*)
+
 ; Fresh empty — avoid "" literals (require can clobber empty string heap slots).
 (define (prompt-empty)
   (substring "x" 0 0))

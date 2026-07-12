@@ -8,7 +8,8 @@
 (require "std/tui/sprite" all:)
 (require "std/tui/canvas" all:)
 
-; Canvas size (terminal cells). 80x24 fills a typical default terminal.
+; Canvas size — filled by (layout-fit!) from (tui:terminal-size).
+; Defaults used until fit; play/demo call layout-fit! before tui:init.
 (define W 80)
 (define H 24)
 (define TITLE-CYAN 56575)
@@ -18,13 +19,34 @@
 (define IN-FG 16777215)
 (define SPEECH-FG 16776960)
 (define BG 0)
-; Layout: HUD 0-2 | room 3-19 | speech 20 | prompt 22-23
+; Layout: HUD 0-2 | room SCENE-Y0..SCENE-Y1-1 | speech SCENE-Y1 | prompt PROMPT-Y..
 (define SCENE-Y0 3)
 (define SCENE-Y1 20)
 (define PROMPT-Y 22)
 (define CAT-W 12)
 (define CAT-H 6)
 
+; Clamp n into [lo, hi]
+(define (clamp-n n lo hi)
+  (if (< n lo) lo (if (> n hi) hi n)))
+
+; Read TTY size (rows . cols) and rebuild layout to fill the window.
+; Min 60x20 so UI still fits; max 200x60 to cap half-block work.
+(define (layout-fit!)
+  (let* ((sz (tui:terminal-size))
+         (rows (car sz))
+         (cols (cdr sz))
+         (w (clamp-n cols 60 200))
+         (h (clamp-n rows 20 60)))
+    (set! W w)
+    (set! H h)
+    (set! SCENE-Y0 3)
+    ; leave 1 speech + 2 prompt rows at bottom
+    (set! SCENE-Y1 (clamp-n (- h 4) 8 (- h 3)))
+    (set! PROMPT-Y (- h 2))
+    ; widen prompt clear band (API on tui-prompt — cannot set! foreign defines)
+    (prompt-set-width! (clamp-n (- w 4) 40 (- w 2)))
+    #t))
 (define BAR0 "..........")
 (define BAR1 "=.........")
 (define BAR2 "==........")
@@ -131,12 +153,15 @@
   (cons (clamp-x (+ cat-x dx)) (clamp-y (+ cat-y dy))))
 
 (define (cat-demo-anim n)
+  (layout-fit!)
   (tui:init "aura-pets" W H)
   (tui:hide-cursor)
   (prompt-init! PROMPT-Y)
   (game-reset!)
   (define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
-  (let loop ((i 0) (current mochi) (cat-x 8) (cat-y 5))
+  (define start-x (clamp-x (quotient W 4)))
+  (define start-y (clamp-y (quotient (+ SCENE-Y0 (- SCENE-Y1 CAT-H)) 2)))
+  (let loop ((i 0) (current mochi) (cat-x start-x) (cat-y start-y))
     (if (>= i n)
       (begin (tui:show-cursor) (tui:shutdown) "DONE")
       (begin
@@ -154,6 +179,10 @@
           (draw-scene! stepped i nx cat-y)
           (display "\n=== Frame ")
           (display (number->string i))
+          (display " size=")
+          (display (number->string W))
+          (display "x")
+          (display (number->string H))
           (display " v")
           (display (number->string (pet-version stepped)))
           (display " anim=")
@@ -164,7 +193,6 @@
           (display (tui:frame-ansi))
           (newline)
           (loop (+ i 1) stepped nx cat-y))))))
-
 ; ── play state (module-level for simpler loop body) ──
 (define *p-pet* #f)
 (define *p-frame* 0)
@@ -269,21 +297,26 @@
   #t)
 
 (define (cat-demo-interactive)
+  ; Fit canvas to *current* terminal (rows . cols) before init.
+  (layout-fit!)
   (tui:init "aura-pets" W H #t)
   (tui:hide-cursor)
   (tui:raw-mode-on)
   (prompt-init! PROMPT-Y)
   (game-reset!)
-  (prompt-set-log! "Arrows move | 1 2 3 care | e grow | q bye | log:/tmp/aura-pets-debug.log")
+  (prompt-set-log!
+    (string-append "size " (number->string W) "x" (number->string H)
+                   " | arrows move | 1 2 3 care | e grow | q bye"))
   (set! *p-pet* (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
   (set! *p-frame* 0)
-  (set! *p-x* 12)
-  (set! *p-y* 8)
+  (set! *p-x* (clamp-x (quotient W 4)))
+  (set! *p-y* (clamp-y (quotient (+ SCENE-Y0 (- SCENE-Y1 CAT-H)) 2)))
   (set! *p-running* #t)
   (set! *p-tick* 0)
   (set! *p-quit* "unknown")
   (plog-start! (plog-path))
-  (plog "info" (pet-snap *p-pet*))
+  (plog "info" (string-append "term=" (number->string W) "x" (number->string H)
+                              " " (pet-snap *p-pet*)))
   (let iter ()
     (if (not *p-running*)
       (begin
@@ -305,6 +338,5 @@
               (plog "ERROR" "play-step-exception")
               (plog-flush!))))
         (iter)))))
-
 (define (play-entry)
   (cat-demo-interactive))
