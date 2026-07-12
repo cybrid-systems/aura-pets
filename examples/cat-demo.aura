@@ -97,7 +97,7 @@
   (draw-text 34 1 "] zest[" BAR-FG BG)
   (draw-text 41 1 (bar (pet-energy pet)) BAR-FG BG)
   (draw-text 1 2
-             (string-append "arrows 1eat 2play 3sleep e grow g world t talk q  ["
+             (string-append "type words | 1 2 3 e g t q  ["
                             (world-theme) " npcs="
                             (number->string (world-npc-count)) "]")
              HUD-DIM BG)
@@ -140,13 +140,14 @@
     (tui:present)
     #t))
 
-; After care cmds, handle world gen / talk using live coords.
+; After care cmds, handle world gen / talk / free-text NL director.
 (define (apply-cmd-world pet cmd)
   (cond
     ((or (string=? cmd "world") (string=? cmd "gen") (string=? cmd "g"))
      (prompt-set-log! "Generating world via MiniMax...")
      (plog "world" "generate-start")
      (world-generate! W H)
+     (world-aura-commit!)
      (game-set-speech!
        (string-append "Welcome to " (world-theme) "!"))
      (prompt-set-log! (game-speech))
@@ -165,6 +166,19 @@
            (game-set-speech! "No one nearby. Walk closer!")
            (prompt-set-log! (game-speech))
            (cons #t pet)))))
+    ; Free language → LLM director → mutate world/eDSL + AST commit
+    ((nl-should-handle? cmd)
+     (prompt-set-log! "Thinking...")
+     (plog "nl" (string-append "in=" cmd))
+     (let ((msg (nl-handle! cmd W H)))
+       (game-set-speech! msg)
+       (prompt-set-log! msg)
+       (plog "nl" (string-append "say=" msg
+                                 " theme=" (world-theme)
+                                 " npcs=" (number->string (world-npc-count))
+                                 " src=" (nl-last-src)
+                                 " brain=" (edsl-show)))
+       (cons #t pet)))
     (else (apply-cmd pet cmd))))
 
 (define (apply-cmd pet cmd)
@@ -342,7 +356,7 @@
   (game-reset!)
   (prompt-set-log!
     (string-append "size " (number->string W) "x" (number->string H)
-                   " | arrows move | 1 2 3 care | e grow | q bye"))
+                   " | type words to change world | 1 2 3 care | q"))
   (set! *p-pet* (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
   (set! *p-frame* 0)
   (set! *p-x* (clamp-x (quotient W 4)))

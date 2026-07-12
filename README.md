@@ -22,22 +22,41 @@ cd /path/to/aura-pets
 | **g** / `world` | Regenerate bg + NPCs (MiniMax-M3) |
 | **t** / `talk` | Talk to nearest friend NPC |
 | **q** | Bye |
-| `teach feed Nom!` | **Change brain eDSL online** |
+| free English in `>` | **LLM director**: change world / NPC / brain |
+| `teach feed Nom!` | Classic eDSL teach (no LLM) |
 | `brain` | Show rules |
 
-### World + NPCs (LLM)
+### Natural language director (eDSL + AST hot update)
 
-On play start (and on **g**), `tools/worldgen.py` calls **MiniMax-M3** to invent a soft park scene: sky/floor colors, trees/flowers, and 3–5 friend NPCs with short speech. Aura loads `/tmp/aura-pets-world.txt` and draws bg + sprites.
+Type English in the bottom prompt and press Enter:
 
-```bash
-# API key (first non-# line), either path works:
-#   ~/code/keys/minimax   or   ~/code/key/minimax
-#   or export MINIMAX_API_KEY=...
-python3 tools/worldgen.py --out /tmp/aura-pets-world.txt --cols 80 --rows 24
-python3 tools/worldgen.py --offline   # no network, fixed cute defaults
+```text
+> snowy park with a penguin
+> when feed say Pizza nom!
+> make a night beach and teach play Splash!
 ```
 
-If the API fails, generation falls back offline automatically.
+Pipeline:
+
+1. `tools/nl_command.py` (MiniMax-M3) → structured ops file  
+2. `lib/nl-cmd.aura` applies ops: theme/colors/NPC/prop + `edsl-teach!`  
+3. Live hot update: rewrite `*edsl-rules*` / `*world-*` in-process (eDSL AST-as-data)  
+4. `ast:snapshot` + side files (`/tmp/aura-pets-edsl.aura`, world file) for Aura version points  
+5. Next frame redraws — no process restart  
+
+> Note: mid-session `set-code` is intentionally avoided; replacing the workspace flat invalidates loaded TUI closures. Snapshot + in-process eDSL is the safe hot path.
+
+### World + NPCs (full regen)
+
+On play start (and on **g**), `tools/worldgen.py` invents a full park scene.
+
+```bash
+# API key: ~/code/keys/minimax  or  ~/code/key/minimax  or MINIMAX_API_KEY
+python3 tools/worldgen.py --out /tmp/aura-pets-world.txt --cols 80 --rows 24
+python3 tools/nl_command.py --text "snowy park" --offline
+```
+
+API failure → offline keyword heuristics automatically.
 
 ## Dev
 
@@ -61,10 +80,12 @@ lib/pet-lifecycle.aura   vitals + evolve (atomic-swap)
 lib/pet-edsl.aura        behavior rules + teach + aura commit hook
 lib/pet-anim.aura        action anim timeline
 lib/pet-game.aura        session / commands
-lib/world.aura           bg + NPC load/draw (from worldgen)
+lib/world.aura           bg + NPC load/draw + AST commit
+lib/nl-cmd.aura          free-text → ops apply + hot update
 lib/pixel-cat.aura       poses: idle eat play sleep evolve
 lib/tui-prompt.aura      line edit + nav when empty
-tools/worldgen.py        MiniMax-M3 (or offline) → world file
+tools/worldgen.py        MiniMax-M3 full world file
+tools/nl_command.py      MiniMax-M3 NL → structured ops
 examples/cat-demo.aura   play scene
 ```
 

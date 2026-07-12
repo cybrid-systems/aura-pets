@@ -35,6 +35,121 @@
   (set! *world-path* p)
   #t)
 
+; ── Live mutators (NL / eDSL hot path) ──
+(define (world-set-theme! name)
+  (set! *world-theme* name)
+  (set! *world-ok* #t)
+  #t)
+(define (world-set-sky! c) (set! *w-sky* c) #t)
+(define (world-set-sky2! c) (set! *w-sky2* c) #t)
+(define (world-set-floor! c) (set! *w-floor* c) #t)
+(define (world-set-floor2! c) (set! *w-floor2* c) #t)
+(define (world-set-star! c) (set! *w-star* c) #t)
+(define (world-clear-npcs!) (set! *world-npcs* '()) #t)
+(define (world-clear-props!) (set! *world-props* '()) #t)
+(define (world-add-npc! npc)
+  (set! *world-npcs* (append *world-npcs* (list npc)))
+  (set! *world-ok* #t)
+  #t)
+(define (world-add-prop! pr)
+  (set! *world-props* (append *world-props* (list pr)))
+  #t)
+
+; Unpack packed rgb → "r,g,b" for save / AST source.
+(define (world-rgb-str packed)
+  (let* ((r (quotient packed 65536))
+         (g (quotient (modulo packed 65536) 256))
+         (b (modulo packed 256)))
+    (string-append (number->string r) ","
+                   (number->string g) ","
+                   (number->string b))))
+
+; Persist current in-memory world to *world-path* (line format).
+(define (world-save!)
+  (let ((s (world-to-file-text)))
+    (try
+      (begin (write-file *world-path* s) #t)
+      (catch (e) #f))))
+
+(define (world-to-file-text)
+  (let* ((s0 (string-append
+               "theme:" *world-theme* "\n"
+               "sky:" (world-rgb-str *w-sky*) "\n"
+               "sky2:" (world-rgb-str *w-sky2*) "\n"
+               "floor:" (world-rgb-str *w-floor*) "\n"
+               "floor2:" (world-rgb-str *w-floor2*) "\n"
+               "star:" (world-rgb-str *w-star*) "\n"))
+         (s1 (let loop ((xs *world-npcs*) (acc s0))
+               (if (null? xs) acc
+                 (let ((n (car xs)))
+                   (loop (cdr xs)
+                         (string-append acc
+                           "npc:" (car n) "|"
+                           (number->string (car (cdr n))) "|"
+                           (number->string (car (cdr (cdr n)))) "|"
+                           (car (cdr (cdr (cdr n)))) "|"
+                           (car (cdr (cdr (cdr (cdr n))))) "\n"))))))
+         (s2 (let loop ((xs *world-props*) (acc s1))
+               (if (null? xs) acc
+                 (let ((p (car xs)))
+                   (loop (cdr xs)
+                         (string-append acc
+                           "prop:" (car p) "|"
+                           (number->string (car (cdr p))) "|"
+                           (number->string (car (cdr (cdr p)))) "\n")))))))
+    s2))
+
+; Emit Aura source rebinding world state (for set-code / AST hot update).
+(define (world-to-aura-source)
+  (let* ((s0 (string-append
+               "(set! *world-theme* \"" *world-theme* "\")\n"
+               "(set! *w-sky* " (number->string *w-sky*) ")\n"
+               "(set! *w-sky2* " (number->string *w-sky2*) ")\n"
+               "(set! *w-floor* " (number->string *w-floor*) ")\n"
+               "(set! *w-floor2* " (number->string *w-floor2*) ")\n"
+               "(set! *w-star* " (number->string *w-star*) ")\n"
+               "(set! *world-npcs* (list"))
+         (s1 (let loop ((xs *world-npcs*) (acc s0))
+               (if (null? xs) acc
+                 (let ((n (car xs)))
+                   (loop (cdr xs)
+                         (string-append acc
+                           " (list \"" (car n) "\" "
+                           (number->string (car (cdr n))) " "
+                           (number->string (car (cdr (cdr n)))) " \""
+                           (car (cdr (cdr (cdr n)))) "\" \""
+                           (car (cdr (cdr (cdr (cdr n))))) "\")"))))))
+         (s2 (string-append s1 "))\n(set! *world-props* (list"))
+         (s3 (let loop ((xs *world-props*) (acc s2))
+               (if (null? xs) acc
+                 (let ((p (car xs)))
+                   (loop (cdr xs)
+                         (string-append acc
+                           " (list \"" (car p) "\" "
+                           (number->string (car (cdr p))) " "
+                           (number->string (car (cdr (cdr p)))) ")"))))))
+         (s4 (string-append s3 "))\n(set! *world-ok* #t)\n")))
+    s4))
+
+; Hot path (play-safe): in-memory *world-* already mutated; snapshot + side file.
+; No set-code mid-session (invalidates loaded closures / TUI). See edsl-aura-commit!.
+; Returns "snap" | "local".
+(define (world-aura-commit!)
+  (let ((src (world-to-aura-source)))
+    (try
+      (begin
+        (ast:snapshot "pet-world")
+        (try
+          (write-file "/tmp/aura-pets-world.aura" src)
+          (catch (e) #f))
+        (world-save!)
+        "snap")
+      (catch (e)
+        (begin
+          (try (write-file "/tmp/aura-pets-world.aura" src) (catch (e2) #f))
+          (world-save!)
+          "local")))))
+
 ; Parse "r,g,b" → packed rgb int (same as canvas rgb).
 (define (parse-rgb s)
   (let ((n (string-length s)))

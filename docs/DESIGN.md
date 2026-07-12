@@ -29,7 +29,8 @@ care → happier pet → love up → evolve unlock → new look → keep caring
 | **Love** | hearts / stars | love points from successful care |
 | **Speech** | bubble under pet | last reaction from **eDSL rules** |
 | **Evolve** | sparkle + new colors | atomic-swap version when love+mood+hunger ready |
-| **eDSL brain** | `teach feed Hi` / `brain` | rule list mutated online |
+| **eDSL brain** | `teach feed Hi` / `brain` / free NL | rule list mutated online + AST commit |
+| **NL director** | free English in prompt | MiniMax → ops → world/eDSL + set-code |
 
 No death. Low vitals → sad face + nudge text only.
 
@@ -120,9 +121,10 @@ Ship a tiny `(define (react event) …)` in the workspace; teach becomes `mutate
 |-------|------|----------------|
 | **R1 Kids MVP** | 1/2/3 care, love, speech, soft evolve | playable without README |
 | **R2 Move + anim + eDSL** (this) | player moves cat; eat/play/sleep/evolve poses; teach mutates rules | demo shows anim=eat/play/sleep/evolve; teach changes speech |
+| **R2.5 NL director** | free English → MiniMax → ops → world/eDSL hot + `ast:snapshot` | type "snowy park"; feed speech changes after teach NL |
 | **R3 Words** | Chinese HUD (needs aura UTF-8 cell) | CN mode |
 | **R4 Memory** | persist soul + brain rules | round-trip file |
-| **R5 Magic** | full `mutate:set-body` + safe-refactor on `react` | verified snapshot/restore |
+| **R5 Magic** | full `mutate:set-body` + safe-refactor on `react` (engine-safe mid-session) | verified snapshot/restore without TUI break |
 
 ## Repo ownership
 

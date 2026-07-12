@@ -30,7 +30,7 @@ FRAMES=10
 MODE="auto"
 
 # pet-log before scene so play-entry can plog-*
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
 
@@ -47,8 +47,11 @@ Aura Pets
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
 Play: arrows move | 1 eat 2 play 3 sleep | e grow | g world | t talk | q bye
-      type: teach feed Hi | brain | world | talk
-World: MiniMax-M3 generates bg+NPCs (key: ~/code/keys/minimax)
+      type free English to direct the world (LLM):
+        snowy park with penguin
+        when feed say Pizza nom!
+        teach feed Hi | brain | world | talk
+World/NL: MiniMax-M3 (key: ~/code/keys/minimax) → eDSL + AST hot update
 
 Debug: every play session writes $LOG_FILE
   tail -f /tmp/aura-pets-debug.log

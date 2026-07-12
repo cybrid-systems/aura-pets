@@ -225,7 +225,6 @@ def main() -> int:
 
     Path(args.out).write_text(text, encoding="utf-8")
     print(f"worldgen: wrote {args.out} source={src}", file=sys.stderr)
-    print(args.out)
     return 0
 
 

@@ -91,13 +91,23 @@
                 " (list \"" (car r) "\" \"" (car (cdr r)) "\" "
                 (number->string (car (cdr (cdr r)))) ")"))))))
 
-; Optional live bridge: append redefinition via set-code if available.
-; Returns "aura" | "local" | "error". Safe no-op when primitives missing.
+; Hot path (play-safe):
+;   1. (edsl-teach!) already rewrote *edsl-rules* in-process (AST-as-data).
+;   2. (ast:snapshot) records a named version point in Aura's AST store.
+;   3. Side-file /tmp/aura-pets-edsl.aura holds the new define for tooling.
+; We deliberately do NOT call set-code / eval-current mid-session: replacing
+; the workspace flat invalidates closures from loaded modules (TUI breaks).
+; Returns "snap" | "local".
 (define (edsl-aura-commit!)
   (let ((src (edsl-to-aura-source)))
     (try
       (begin
         (ast:snapshot "pet-edsl")
-        (set-code (string-append (current-source) "\n;; pet-edsl teach\n" src "\n"))
-        "aura")
-      (catch (e) "local"))))
+        (try
+          (write-file "/tmp/aura-pets-edsl.aura" src)
+          (catch (e) #f))
+        "snap")
+      (catch (e)
+        (begin
+          (try (write-file "/tmp/aura-pets-edsl.aura" src) (catch (e2) #f))
+          "local")))))

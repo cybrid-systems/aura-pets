@@ -1,0 +1,240 @@
+; lib/nl-cmd.aura — natural language command pipeline for aura-pets.
+;
+; Flow:
+;   player free text in prompt
+;     → tools/nl_command.py (MiniMax-M3) → /tmp/aura-pets-nl.txt
+;     → (nl-apply-file! path) mutates world + eDSL in process
+;     → (edsl-aura-commit!) / (world-aura-commit!) for AST hot path
+;
+; Ops file lines (see tools/nl_command.py):
+;   say: | theme: | sky: | npc_clear: | npc: | prop_clear: | prop:
+;   teach:event|speech | care:feed | world_regen: | aura:commit | help:
+
+(define *nl-path* "/tmp/aura-pets-nl.txt")
+(define *nl-ctx-path* "/tmp/aura-pets-nl-ctx.txt")
+(define *nl-last-say* "")
+(define *nl-last-src* "none")
+(define *nl-did-aura* #f)
+
+(define (nl-last-say) *nl-last-say*)
+(define (nl-last-src) *nl-last-src*)
+
+(define (nl-repo-root)
+  (let ((env (try (getenv "AURA_PETS_ROOT") (catch (e) #f))))
+    (if (and env (string? env) (> (string-length env) 0)
+             (file-exists? (string-append env "/tools/nl_command.py")))
+        env
+      (if (file-exists? "/home/dev/code/aura-pets/tools/nl_command.py")
+          "/home/dev/code/aura-pets"
+        "."))))
+
+; Build a small context blob for the LLM (theme + npc names + brain rules).
+(define (nl-write-context!)
+  (let ((s (string-append
+             "theme=" (world-theme) "\n"
+             "npcs=" (number->string (world-npc-count)) "\n"
+             (edsl-show) "\n")))
+    (try
+      (begin (write-file *nl-ctx-path* s) #t)
+      (catch (e) #f))))
+
+; Shell to Python translator.
+(define (nl-generate! user-text cols rows)
+  (let* ((root (nl-repo-root))
+         (py (string-append root "/tools/nl_command.py"))
+         ; Escape double quotes in user text for shell.
+         (safe (nl-shell-escape user-text))
+         (off (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f)))
+         (off-flag (if (and off (string? off) (> (string-length off) 0)
+                            (not (string=? off "0")))
+                       " --offline"
+                     ""))
+         (cmd (string-append
+                "python3 " py
+                " --text \"" safe "\""
+                " --out " *nl-path*
+                " --cols " (number->string cols)
+                " --rows " (number->string rows)
+                " --context-file " *nl-ctx-path*
+                off-flag
+                " 2>>/tmp/aura-pets-debug.log")))
+    (nl-write-context!)
+    (try
+      (begin
+        (shell cmd)
+        (set! *nl-last-src* "py")
+        #t)
+      (catch (e)
+        (begin
+          (set! *nl-last-src* "err")
+          #f)))))
+
+; Minimal shell escape: strip double quotes and backslashes.
+(define (nl-shell-escape s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (acc (substring "x" 0 0)))
+      (if (>= i n)
+          acc
+        (let ((ch (substring s i (+ i 1))))
+          (if (or (string=? ch "\"") (string=? ch "\\") (string=? ch "$")
+                  (string=? ch "`") (string=? ch "\n") (string=? ch "\r"))
+              (loop (+ i 1) acc)
+            (loop (+ i 1) (string-append acc ch))))))))
+
+; Apply one op line. Returns #t if recognized.
+(define (nl-apply-line! line)
+  (let ((n (string-length line)))
+    (if (= n 0)
+        #f
+      (cond
+        ((and (>= n 4) (string=? (substring line 0 4) "say:"))
+         (set! *nl-last-say* (substring line 4 n))
+         #t)
+        ((and (>= n 6) (string=? (substring line 0 6) "theme:"))
+         (world-set-theme! (substring line 6 n))
+         #t)
+        ((and (>= n 4) (string=? (substring line 0 4) "sky:")
+              (not (and (>= n 5) (string=? (substring line 0 5) "sky2:"))))
+         (world-set-sky! (parse-rgb (substring line 4 n)))
+         #t)
+        ((and (>= n 5) (string=? (substring line 0 5) "sky2:"))
+         (world-set-sky2! (parse-rgb (substring line 5 n)))
+         #t)
+        ((and (>= n 6) (string=? (substring line 0 6) "floor:")
+              (not (and (>= n 7) (string=? (substring line 0 7) "floor2:"))))
+         (world-set-floor! (parse-rgb (substring line 6 n)))
+         #t)
+        ((and (>= n 7) (string=? (substring line 0 7) "floor2:"))
+         (world-set-floor2! (parse-rgb (substring line 7 n)))
+         #t)
+        ((and (>= n 5) (string=? (substring line 0 5) "star:"))
+         (world-set-star! (parse-rgb (substring line 5 n)))
+         #t)
+        ((or (string=? line "npc_clear:") (string=? line "npc_clear"))
+         (world-clear-npcs!)
+         #t)
+        ((or (string=? line "prop_clear:") (string=? line "prop_clear"))
+         (world-clear-props!)
+         #t)
+        ((and (>= n 4) (string=? (substring line 0 4) "npc:"))
+         (let ((npc (world-parse-npc line)))
+           (if npc (begin (world-add-npc! npc) #t) #f)))
+        ((and (>= n 5) (string=? (substring line 0 5) "prop:"))
+         (let ((pr (world-parse-prop line)))
+           (if pr (begin (world-add-prop! pr) #t) #f)))
+        ((and (>= n 6) (string=? (substring line 0 6) "teach:"))
+         (nl-apply-teach! (substring line 6 n)))
+        ((and (>= n 5) (string=? (substring line 0 5) "care:"))
+         ; care is handled by caller via return; mark as say only here
+         (set! *nl-last-say*
+           (string-append "care:" (substring line 5 n)))
+         #t)
+        ((or (string=? line "world_regen:") (string=? line "world_regen"))
+         (world-generate! 80 24)
+         #t)
+        ((or (string=? line "aura:commit") (string=? line "aura:commit:"))
+         (begin
+           (set! *nl-did-aura* #t)
+           (let ((e (edsl-aura-commit!))
+                 (w (world-aura-commit!)))
+             (set! *nl-last-src*
+               (string-append "aura-e=" e " w=" w))
+             #t)))
+        ((or (string=? line "help:") (string=? line "help"))
+         (set! *nl-last-say*
+           "Try: snowy park / teach feed Pizza! / brain")
+         #t)
+        (else #f)))))
+
+; teach:event|speech
+(define (nl-apply-teach! body)
+  (let ((n (string-length body)))
+    (let find ((i 0))
+      (if (>= i n)
+          #f
+        (if (string=? (substring body i (+ i 1)) "|")
+            (let ((ev (substring body 0 i))
+                  (sp (substring body (+ i 1) n)))
+              (if (or (= (string-length ev) 0) (= (string-length sp) 0))
+                  #f
+                (begin
+                  (edsl-teach! ev sp)
+                  (if (= (string-length *nl-last-say*) 0)
+                      (set! *nl-last-say* (string-append "Learned " ev "!"))
+                    #t)
+                  #t)))
+          (find (+ i 1)))))))
+
+(define (nl-apply-text! text)
+  (set! *nl-last-say* "")
+  (set! *nl-did-aura* #f)
+  (let ((n (string-length text)))
+    (let loop ((i 0) (start 0))
+      (if (>= i n)
+          (begin
+            (if (< start n)
+                (nl-apply-line! (substring text start n))
+              #t)
+            #t)
+        (if (string=? (substring text i (+ i 1)) "\n")
+            (begin
+              (if (> i start)
+                  (nl-apply-line! (substring text start i))
+                #t)
+              (loop (+ i 1) (+ i 1)))
+          (loop (+ i 1) start))))))
+
+(define (nl-apply-file! path)
+  (try
+    (if (file-exists? path)
+        (begin
+          (nl-apply-text! (read-file path))
+          (world-save!)
+          #t)
+      #f)
+    (catch (e) #f)))
+
+; Full pipeline: user text → python → apply. Returns speech string.
+(define (nl-handle! user-text cols rows)
+  (set! *nl-last-say* "")
+  (set! *nl-last-src* "none")
+  (nl-generate! user-text cols rows)
+  (if (file-exists? *nl-path*)
+      (begin
+        (nl-apply-file! *nl-path*)
+        ; If LLM forgot aura:commit but taught, still commit eDSL AST.
+        (if (not *nl-did-aura*)
+            (begin
+              (edsl-aura-commit!)
+              (world-aura-commit!))
+          #t)
+        (if (= (string-length *nl-last-say*) 0)
+            (set! *nl-last-say*
+              (string-append "OK " (world-theme)
+                             " npcs=" (number->string (world-npc-count))))
+          #t)
+        *nl-last-say*)
+    (begin
+      (set! *nl-last-say* "NL tool failed. Try teach feed Hi")
+      *nl-last-say*)))
+
+; True when free text should go through the LLM director (not a short cmd).
+(define (nl-should-handle? cmd)
+  (let ((n (string-length cmd)))
+    (if (< n 2)
+        #f
+      (if (or (string=? cmd "q") (string=? cmd "quit") (string=? cmd "bye")
+              (string=? cmd "1") (string=? cmd "2") (string=? cmd "3")
+              (string=? cmd "e") (string=? cmd "g") (string=? cmd "t")
+              (string=? cmd "world") (string=? cmd "gen") (string=? cmd "talk")
+              (string=? cmd "brain") (string=? cmd "edsl") (string=? cmd "help")
+              (string=? cmd "?") (string=? cmd "feed") (string=? cmd "play")
+              (string=? cmd "sleep") (string=? cmd "evolve") (string=? cmd "grow")
+              (string=? cmd "eat") (string=? cmd "f") (string=? cmd "p")
+              (string=? cmd "s") (string=? cmd "z"))
+          #f
+        ; "teach X Y" stays on classic path
+        (if (and (>= n 6) (string=? (substring cmd 0 5) "teach")
+                 (string=? (substring cmd 5 6) " "))
+            #f
+          #t)))))
