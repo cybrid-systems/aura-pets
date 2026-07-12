@@ -26,14 +26,32 @@
 (define SCENE-Y1 16)
 (define PROMPT-Y 16)
 
+; Precomputed bars — avoid per-frame string-append loops (heap churn / corruption).
+(define BAR0 "..........")
+(define BAR1 "=.........")
+(define BAR2 "==........")
+(define BAR3 "===.......")
+(define BAR4 "====......")
+(define BAR5 "=====.....")
+(define BAR6 "======....")
+(define BAR7 "=======...")
+(define BAR8 "========..")
+(define BAR9 "=========.")
+(define BAR10 "==========")
+
 (define (bar n)
-  (let* ((filled (if (< n 0) 0 (if (> n 10) 10 n)))
-         (empty (- 10 filled)))
-    (string-append
-      (let loop ((i 0) (s ""))
-        (if (>= i filled) s (loop (+ i 1) (string-append s "="))))
-      (let loop ((i 0) (s ""))
-        (if (>= i empty) s (loop (+ i 1) (string-append s ".")))))))
+  (cond
+    ((<= n 0) BAR0)
+    ((= n 1) BAR1)
+    ((= n 2) BAR2)
+    ((= n 3) BAR3)
+    ((= n 4) BAR4)
+    ((= n 5) BAR5)
+    ((= n 6) BAR6)
+    ((= n 7) BAR7)
+    ((= n 8) BAR8)
+    ((= n 9) BAR9)
+    (else BAR10)))
 
 (define (draw-hud! pet frame-n)
   (draw-text 1 0 "aura-pets" TITLE-CYAN BG)
@@ -42,12 +60,14 @@
                             " " (pet-mood-word pet)
                             " f=" (number->string frame-n))
              MATRIX-GREEN BG)
-  (draw-text 1 1
-             (string-append
-               "H[" (bar (pet-hunger pet)) "] "
-               "M[" (bar (pet-mood pet)) "] "
-               "E[" (bar (pet-energy pet)) "]")
+  (draw-text 1 1 "H[" BAR-FG BG)
+  (draw-text 3 1 (bar (pet-hunger pet)) BAR-FG BG)
+  (draw-text 13 1 "] M[" BAR-FG BG)
+  (draw-text 17 1 (bar (pet-mood pet))
              (if (< (pet-mood pet) 5) BAR-LO BAR-FG) BG)
+  (draw-text 27 1 "] E[" BAR-FG BG)
+  (draw-text 31 1 (bar (pet-energy pet)) BAR-FG BG)
+  (draw-text 41 1 "]" BAR-FG BG)
   #t)
 
 (define (draw-scene! pet frame-n cat-x cat-y)
@@ -113,9 +133,11 @@
               (modulo (+ cat-x 1) (- W 14))
               cat-y)))))
 
-; Interactive: prompt + hotkeys (Grok Build–style bottom bar)
+; Interactive: prompt + hotkeys (Grok Build–style bottom bar).
+; 4th arg #t → live present to stdout TTY (also AURA_TUI_LIVE=1).
+; Keyboard comes from /dev/tty even when source is piped via run.sh.
 (define (cat-demo-interactive)
-  (tui:init "aura-pets" W H)
+  (tui:init "aura-pets" W H #t)
   (tui:hide-cursor)
   (tui:raw-mode-on)
   (prompt-init! PROMPT-Y)
@@ -126,23 +148,27 @@
       (begin
         (pet-render-sync)
         (draw-scene! current frame cat-x cat-y)
-        (let ((e (tui:read-event 100)))
-          (let ((act (prompt-handle e)))
-            (cond
-              ((not act)
-               (loop (+ frame 1) current
-                     (modulo (+ cat-x (if (= (modulo frame 8) 0) 1 0)) (- W 14))
-                     cat-y #t))
-              ((string=? act "quit")
-               (loop frame current cat-x cat-y #f))
-              ((string=? act "hot")
-               (let ((r (handle-cmd current (prompt-hot))))
-                 (loop (+ frame 1) (cdr r) cat-x cat-y (car r))))
-              ((string=? act "submit")
-               (let ((cmd (prompt-take-submit!)))
-                 (if (= (string-length cmd) 0)
-                     (loop (+ frame 1) current cat-x cat-y #t)
-                   (let ((r (handle-cmd current cmd)))
-                     (loop (+ frame 1) (cdr r) cat-x cat-y (car r))))))
-              (else
-               (loop frame current cat-x cat-y #t)))))))))
+        (let* ((e (tui:read-event 80))
+               (act (prompt-handle e)))
+          (cond
+            ((not act)
+             (loop (+ frame 1) current
+                   (modulo (+ cat-x (if (= (modulo frame 8) 0) 1 0)) (- W 14))
+                   cat-y #t))
+            ((string=? act "quit")
+             (loop frame current cat-x cat-y #f))
+            ((string=? act "hot")
+             (let ((r (handle-cmd current (prompt-hot))))
+               (if (car r)
+                   (loop (+ frame 1) (cdr r) cat-x cat-y #t)
+                 (loop frame (cdr r) cat-x cat-y #f))))
+            ((string=? act "submit")
+             (let ((cmd (prompt-take-submit!)))
+               (if (= (string-length cmd) 0)
+                   (loop (+ frame 1) current cat-x cat-y #t)
+                 (let ((r (handle-cmd current cmd)))
+                   (if (car r)
+                       (loop (+ frame 1) (cdr r) cat-x cat-y #t)
+                     (loop frame (cdr r) cat-x cat-y #f))))))
+            (else
+             (loop (+ frame 1) current cat-x cat-y #t))))))))

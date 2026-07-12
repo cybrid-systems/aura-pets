@@ -13,16 +13,20 @@
 ;   (prompt-draw! log-fg in-fg bg)
 
 (define *prompt-y* 0)
-(define *prompt-buf* "")
+(define *prompt-buf* "x")
 (define *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  type help")
-(define *prompt-submit* "")
-(define *prompt-hot* "")
+(define *prompt-submit* "x")
+(define *prompt-hot* "x")
+
+; Fresh empty string — avoid "" literals (heap slots can be clobbered by later require).
+(define (prompt-empty)
+  (substring "x" 0 0))
 
 (define (prompt-init! y)
   (set! *prompt-y* y)
-  (set! *prompt-buf* "")
-  (set! *prompt-submit* "")
-  (set! *prompt-hot* "")
+  (set! *prompt-buf* (prompt-empty))
+  (set! *prompt-submit* (prompt-empty))
+  (set! *prompt-hot* (prompt-empty))
   (set! *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  type help")
   #t)
 
@@ -40,7 +44,7 @@
   s)
 
 (define (prompt-clear-buf!)
-  (set! *prompt-buf* "")
+  (set! *prompt-buf* (prompt-empty))
   #t)
 
 (define (prompt-backspace!)
@@ -48,7 +52,8 @@
     (if (<= n 0)
         #f
       (begin
-        (set! *prompt-buf* (substring *prompt-buf* 0 (- n 1)))
+        (set! *prompt-buf*
+          (if (<= n 1) (prompt-empty) (substring *prompt-buf* 0 (- n 1))))
         #t))))
 
 (define (prompt-append! ch)
@@ -58,26 +63,28 @@
       (set! *prompt-buf* (string-append *prompt-buf* ch))
       #t)))
 
-; Single-char printable? (no control, no arrows)
+; Single-char ASCII printable (avoid string->list / char->integer churn).
 (define (prompt-printable? ch)
   (and (string? ch)
        (= (string-length ch) 1)
-       (let ((c (char->integer (car (string->list ch)))))
-         (and (>= c 32) (< c 127)))))
+       (not (string=? ch "\n"))
+       (not (string=? ch "\r"))
+       (not (string=? ch "\x7f"))
+       (not (string=? ch "\x08"))
+       (not (string=? ch "\x1b"))))
 
 (define (prompt-is-enter? ch)
-  (or (string=? ch "\n") (string=? ch "\r") (string=? ch "Enter")))
+  (or (string=? ch "\n") (string=? ch "\r") (string=? ch "\x0d") (string=? ch "Enter")))
 
 (define (prompt-is-bs? ch)
   (or (string=? ch "\x7f") (string=? ch "\x08") (string=? ch "Backspace")))
 
+(define (prompt-is-hot? ch)
+  (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
+      (string=? ch "e") (string=? ch "E")))
+
 ; Handle one tui:read-event result.
-; Returns:
-;   "quit"   — user wants out
-;   "submit" — line submitted (use prompt-take-submit!)
-;   "hot"    — shortcut when buffer empty (use prompt-hot)
-;   "edit"   — buffer changed
-;   #f       — ignore / no event
+; Returns: "quit" | "submit" | "hot" | "edit" | #f
 (define (prompt-handle e)
   (if (not (pair? e))
       #f
@@ -85,27 +92,25 @@
         "quit"
       (if (not (string=? (car e) "key"))
           #f
-        (let ((ch (cdr e)))
-          (if (prompt-is-enter? ch)
-              (begin
-                (set! *prompt-submit* *prompt-buf*)
-                (set! *prompt-buf* "")
-                "submit")
-            (if (prompt-is-bs? ch)
-                (begin (prompt-backspace!) "edit")
-              (if (and (= (string-length *prompt-buf*) 0)
-                       (or (string=? ch "q") (string=? ch "Q")))
-                  "quit"
-                (if (and (= (string-length *prompt-buf*) 0)
-                         (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
-                             (string=? ch "e") (string=? ch "E")))
-                    (begin
-                      (set! *prompt-hot*
-                        (if (or (string=? ch "E")) "e" ch))
-                      "hot")
-                  (if (prompt-printable? ch)
-                      (begin (prompt-append! ch) "edit")
-                    #f))))))))))
+        (let ((ch (cdr e))
+              (empty? (= (string-length *prompt-buf*) 0)))
+          (cond
+            ((prompt-is-enter? ch)
+             (set! *prompt-submit* *prompt-buf*)
+             (set! *prompt-buf* (prompt-empty))
+             "submit")
+            ((prompt-is-bs? ch)
+             (prompt-backspace!)
+             "edit")
+            ((and empty? (or (string=? ch "q") (string=? ch "Q")))
+             "quit")
+            ((and empty? (prompt-is-hot? ch))
+             (set! *prompt-hot* (if (string=? ch "E") "e" ch))
+             "hot")
+            ((prompt-printable? ch)
+             (prompt-append! ch)
+             "edit")
+            (else #f)))))))
 
 ; tui:cell only paints the first codepoint — always emit one char per cell.
 (define (prompt-put-str! col row str fg bg attr)
@@ -118,7 +123,7 @@
 
 (define (prompt-draw! log-fg in-fg bg)
   (prompt-put-str! 1 *prompt-y* *prompt-log* log-fg bg 0)
-  (prompt-put-str! 1 (+ *prompt-y* 1)
-                   (string-append "> " *prompt-buf* "_")
-                   in-fg bg 1)
+  (prompt-put-str! 1 (+ *prompt-y* 1) "> " in-fg bg 1)
+  (prompt-put-str! 3 (+ *prompt-y* 1) *prompt-buf* in-fg bg 1)
+  (prompt-put-str! (+ 3 (string-length *prompt-buf*)) (+ *prompt-y* 1) "_" in-fg bg 1)
   #t)

@@ -37,8 +37,9 @@ FRAMES=8
 ENTRY_FN="cat-demo-anim"
 MODE="frames"   # frames | interactive | smoke
 
-# Shared lib load order (sibling loads from shell, not nested mid-file).
-LOAD_LIBS="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+# Load order: prompt LAST so its string heap slots are not clobbered by
+# (require "std/tui/sprite") inside cat-demo (empty-string literal bug).
+LOAD_LIBS="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -70,18 +71,30 @@ fi
 
 case "$MODE" in
   interactive)
-    EXPR="(begin $LOAD_LIBS (load \"$SCRIPT_DIR/$EXAMPLE\") (cat-demo-interactive))"
+    # lifecycle + pixel → example (require sprite) → prompt (fresh strings) → entry
+    EXPR="(begin $LOAD_LIBS (load \"$SCRIPT_DIR/$EXAMPLE\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (cat-demo-interactive))"
+    export AURA_TUI_LIVE=1
     ;;
   smoke)
-    # smoke only needs lifecycle + sprite/canvas (loaded inside file)
     EXPR="(begin (load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/$EXAMPLE\") (smoke-entry))"
     ;;
   *)
-    EXPR="(begin $LOAD_LIBS (load \"$SCRIPT_DIR/$EXAMPLE\") ($ENTRY_FN $FRAMES))"
+    EXPR="(begin $LOAD_LIBS (load \"$SCRIPT_DIR/$EXAMPLE\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") ($ENTRY_FN $FRAMES))"
     ;;
 esac
 
 echo "aura=$AURA_BIN" >&2
 echo "stdlib=$AURA_STDLIB_DIR" >&2
 echo "example=$EXAMPLE mode=$MODE" >&2
-echo "$EXPR" | "$AURA_BIN" 2>&1
+
+if [ "$MODE" = "interactive" ]; then
+  if [ ! -e /dev/tty ]; then
+    echo "FATAL: interactive needs a real terminal (/dev/tty)" >&2
+    exit 1
+  fi
+  # Source on stdin pipe; keys read from /dev/tty inside aura tui_input.
+  # Do NOT redirect stdout away from the TTY or present() will stay headless.
+  echo "$EXPR" | "$AURA_BIN"
+else
+  echo "$EXPR" | "$AURA_BIN" 2>&1
+fi
