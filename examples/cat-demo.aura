@@ -118,8 +118,9 @@
   (draw-text 44 1 "E" BAR-FG BG)
   (draw-text 45 1 (bar (pet-energy pet)) BAR-FG BG)
   (draw-text 1 2
-             (string-append "Space fire | 2x arrow dash | /weapon /grow  ["
-                            (world-theme) " n="
+             (string-append "Space fire | /bg cyber | ["
+                            (world-theme) " bg="
+                            (world-bg-style) " n="
                             (number->string (world-npc-count))
                             (if (nl-busy?) " ...]" "]"))
              HUD-DIM BG)
@@ -152,7 +153,7 @@
          (draw-y (+ cat-y (anim-hop)))
          (blink (and (string=? pose "idle") (= (modulo frame-n 6) 5))))
     (tui:clear BG BG)
-    (world-draw-bg! W H SCENE-Y0 SCENE-Y1)
+    (world-draw-bg! W H SCENE-Y0 SCENE-Y1 frame-n)
     (world-draw-npcs! frame-n)
     (battle-draw-npc-hud! frame-n)
     (draw-hud! pet frame-n)

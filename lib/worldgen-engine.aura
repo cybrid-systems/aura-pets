@@ -11,10 +11,13 @@
   (string-append
     "You design cute kid-safe virtual pet game worlds for a terminal pixel game.\n"
     "Reply with ONLY plain text lines (no markdown):\n"
-    "theme:<name>\nsky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
+    "theme:<name>\n"
+    "bg:<meadow|cyber|matrix|stars|city|ocean|grid|sunset>\n"
+    "sky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
     "npc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
     "prop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
     "Rules: 4-6 npc (max 6), 6-10 prop (max 12). ASCII names. "
+    "bg cyber = neon grid + matrix rain (cyber cat). "
     "x in [2,COLS-4], y in [4,ROWS-7]. Kid-safe."))
 
 (define (worldgen-offline cols rows)
@@ -34,8 +37,9 @@
          (y-span (if (< (- floor-y 6) 4) 4 (- floor-y 6)))
          (s0 (string-append
                "theme:Sunset Meadow\n"
-               "sky:30,50,90\nsky2:45,70,110\n"
-               "floor:55,110,65\nfloor2:40,90,50\nstar:230,235,255\n")))
+               "bg:sunset\n"
+               "sky:40,30,90\nsky2:90,50,70\n"
+               "floor:55,110,65\nfloor2:40,90,50\nstar:255,220,160\n")))
     (let loop ((xs names) (i 0) (acc s0))
       (if (null? xs)
           (let loop2 ((ps props) (j 0) (acc2 acc))
@@ -63,6 +67,7 @@
   (let ((n (string-length line)))
     (if (= n 0) #f
       (or (and (>= n 6) (string=? (substring line 0 6) "theme:"))
+          (and (>= n 3) (string=? (substring line 0 3) "bg:"))
           (and (>= n 4) (string=? (substring line 0 4) "sky:"))
           (and (>= n 5) (string=? (substring line 0 5) "sky2:"))
           (and (>= n 6) (string=? (substring line 0 6) "floor:"))

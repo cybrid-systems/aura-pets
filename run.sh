@@ -55,6 +55,8 @@ Play: arrows move | 1 2 3 care | q bye
     /weapon [name]        cycle/set: shot double beam bomb fire
     /fight                melee if close
     /heal /status /talk /world /help
+    /bg cyber|stars|ocean|city|sunset|meadow|grid
+  Free text (async LLM): "cyber rain" / "starry night" / "ocean beach"
   Double-tap same arrow = dash. NPCs shoot back. HP bars + dmg FX.
 World/NL: pure Aura (llm-client + engines). Key: ~/code/keys/minimax
 

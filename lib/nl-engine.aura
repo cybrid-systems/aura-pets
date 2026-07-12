@@ -8,13 +8,17 @@
   (string-append
     "You are the live director of a kids terminal pet game (Aura eDSL).\n"
     "Convert player text into ONLY plain apply-lines (no markdown):\n"
-    "say:<reply max 40>\ntheme:<name>\nsky:r,g,b\nsky2:r,g,b\n"
-    "floor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
+    "say:<reply max 40>\ntheme:<name>\n"
+    "bg:<meadow|cyber|matrix|stars|city|ocean|grid|sunset>\n"
+    "sky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
     "npc_clear:\nnpc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
     "prop_clear:\nprop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
     "teach:<feed|play|sleep|evolve|move|idle>|<speech>\n"
     "aura:commit\nhelp:\n"
-    "Prefer 4-6 npcs and 6-10 props (max 8 npcs / 12 props). "
+    "Background: cyber/matrix = neon grid + matrix rain (cyber cat).\n"
+    "stars=night, ocean=beach, city=skyline, sunset=warm sky, meadow=park.\n"
+    "When user asks for cyber/neon/matrix/赛博, emit bg:cyber + dark sky colors.\n"
+    "Prefer 4-6 npcs and 6-10 props (max 6 npcs / 12 props). "
     "Kid-safe. ASCII names. x in [2,COLS-4] y in [4,ROWS-7]."))
 
 ; ── Offline heuristics ──
@@ -34,29 +38,88 @@
                    (nl-has? t "ice") (nl-has? t "cold")))
          (beach (or (nl-has? t "beach") (nl-has? t "海") (nl-has? t "sand")))
          (night (or (nl-has? t "night") (nl-has? t "夜") (nl-has? t "star")))
-         (want-world (or snow beach night
+         (cyber (or (nl-has? t "cyber") (nl-has? t "Cyber")
+                    (nl-has? t "matrix") (nl-has? t "neon")
+                    (nl-has? t "赛博") (nl-has? t "矩阵")
+                    (nl-has? t "rain") (nl-has? t "黑客")))
+         (city (or (nl-has? t "city") (nl-has? t "城") (nl-has? t "urban")))
+         (bg-only (or (nl-has? t "bg") (nl-has? t "background")
+                      (nl-has? t "背景") (nl-has? t "/bg")))
+         (want-world (or snow beach night cyber city
                          (nl-has? t "world") (nl-has? t "park")
                          (nl-has? t "scene") (nl-has? t "npc")
                          (nl-has? t "背景") (nl-has? t "公园")
                          (nl-has? t "make") (nl-has? t "create")
+                         bg-only
                          (> (string-length t) 6))))
     (if (or (nl-has? t "teach") (nl-has? t "教"))
         (string-append
           "say:Learned feed!\n"
           "teach:feed|Yum!\n"
           "aura:commit\n")
-      (if want-world
-          ; Dense offline world (many NPCs) — themed prefix when snow/beach/night
+      ; Background-only prompts: switch style + palette without full regen
+      (if (and bg-only (or cyber night beach city snow) (not (nl-has? t "npc")))
+          (cond
+            (cyber
+             (string-append
+               "say:Cyber rain ON!\n"
+               "theme:Cyber Cat City\n"
+               "bg:cyber\n"
+               "sky:0,8,18\nsky2:0,20,35\n"
+               "floor:10,15,30\nfloor2:5,10,20\n"
+               "star:0,255,120\n"))
+            (night
+             (string-append
+               "say:Starry night!\n"
+               "theme:Starry Park\n"
+               "bg:stars\n"
+               "sky:4,6,24\nsky2:12,10,40\n"
+               "floor:18,20,40\nfloor2:10,12,28\n"
+               "star:230,235,255\n"))
+            (beach
+             (string-append
+               "say:Ocean waves!\n"
+               "theme:Sunny Beach\n"
+               "bg:ocean\n"
+               "sky:80,160,230\nsky2:180,220,255\n"
+               "floor:200,180,120\nfloor2:170,150,100\n"
+               "star:255,255,200\n"))
+            (city
+             (string-append
+               "say:City lights!\n"
+               "theme:Neon City\n"
+               "bg:city\n"
+               "sky:20,25,50\nsky2:60,40,70\n"
+               "floor:30,30,40\nfloor2:20,20,28\n"
+               "star:255,220,80\n"))
+            (else
+             (string-append
+               "say:Snow soft!\n"
+               "theme:Snowy Meadow\n"
+               "bg:meadow\n"
+               "sky:180,200,230\nsky2:220,230,245\n"
+               "floor:240,245,255\nfloor2:200,210,230\n"
+               "star:255,255,255\n")))
+        (if want-world
+            (string-append
+              (cond
+                (cyber
+                 (string-append
+                   "say:Cyber park online!\n"
+                   "theme:Cyber Cat City\n"
+                   "bg:cyber\n"
+                   "sky:0,8,18\nsky2:0,20,35\n"
+                   "floor:10,15,30\nfloor2:5,10,20\n"
+                   "star:0,255,120\n"))
+                (snow "say:Snow day!\ntheme:Snowy Meadow\nbg:meadow\n")
+                (beach "say:Beach day!\ntheme:Sunny Beach\nbg:ocean\n")
+                (night "say:Night park!\ntheme:Starry Park\nbg:stars\n")
+                (city "say:City walk!\ntheme:Neon City\nbg:city\n")
+                (else "say:New park ready!\ntheme:Sunset Meadow\nbg:sunset\n"))
+              (worldgen-offline cols rows))
           (string-append
-            (cond
-              (snow "say:Snow day!\ntheme:Snowy Meadow\n")
-              (beach "say:Beach day!\ntheme:Sunny Beach\n")
-              (night "say:Night park!\ntheme:Starry Park\n")
-              (else "say:New park ready!\n"))
-            (worldgen-offline cols rows))
-        (string-append
-          "say:Try /help or describe a park\n"
-          "help:\n")))))
+            "say:Try cyber rain / starry night / /bg cyber\n"
+            "help:\n"))))))
 
 (define (nl-engine-run! text cols rows out-path offline?)
   (let ((force-off

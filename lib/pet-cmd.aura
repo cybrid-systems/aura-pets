@@ -55,8 +55,8 @@
 
 (define (cmd-help-text)
   (string-append
-    "/eat /grow /back /fire /weapon /fight /heal "
-    "/status /talk /world /help | Space=fire double-tap=dash"))
+    "/eat /grow /bg cyber|stars|ocean|city|sunset|meadow "
+    "/fire /world /help | type: cyber rain / starry night"))
 
 ; Core slash dispatcher. pet is the live pet record.
 (define (cmd-run pet raw)
@@ -194,6 +194,64 @@
        (set! *speech* "world")
        (cons #t pet))
 
+      ; ── background style (instant, no LLM) ──
+      ((or (string=? head "bg") (string=? head "background")
+           (string=? head "backdrop"))
+       (if (= (string-length args) 0)
+           (begin
+             (set! *speech*
+               (string-append "bg=" (world-bg-style)
+                              " try: cyber stars ocean city sunset meadow grid"))
+             (set! *last-act* "bg")
+             (cons #t pet))
+         (let ((st (cmd-downcase-ascii args)))
+           (if (or (string=? st "cyber") (string=? st "matrix")
+                   (string=? st "neon"))
+               (begin
+                 (world-apply-cyber-palette!)
+                 (set! *speech* "Cyber cat rain ON!")
+                 (set! *last-act* "bg")
+                 (cons #t pet))
+             (begin
+               (world-set-bg-style! st)
+               (cond
+                 ((string=? (world-bg-style) "stars")
+                  (world-set-sky! (world-rgb 4 6 24))
+                  (world-set-sky2! (world-rgb 12 10 40))
+                  (world-set-floor! (world-rgb 18 20 40))
+                  (world-set-floor2! (world-rgb 10 12 28))
+                  (world-set-star! (world-rgb 230 235 255)))
+                 ((string=? (world-bg-style) "ocean")
+                  (world-set-sky! (world-rgb 80 160 230))
+                  (world-set-sky2! (world-rgb 180 220 255))
+                  (world-set-floor! (world-rgb 200 180 120))
+                  (world-set-floor2! (world-rgb 170 150 100)))
+                 ((string=? (world-bg-style) "city")
+                  (world-set-sky! (world-rgb 20 25 50))
+                  (world-set-sky2! (world-rgb 60 40 70))
+                  (world-set-floor! (world-rgb 30 30 40))
+                  (world-set-floor2! (world-rgb 20 20 28)))
+                 ((string=? (world-bg-style) "sunset")
+                  (world-set-sky! (world-rgb 40 30 90))
+                  (world-set-sky2! (world-rgb 90 50 70))
+                  (world-set-floor! (world-rgb 55 110 65))
+                  (world-set-floor2! (world-rgb 40 90 50))
+                  (world-set-star! (world-rgb 255 220 160)))
+                 ((string=? (world-bg-style) "grid")
+                  (world-set-sky! (world-rgb 5 12 22))
+                  (world-set-sky2! (world-rgb 3 8 16))
+                  (world-set-floor! (world-rgb 0 40 55))
+                  (world-set-floor2! (world-rgb 0 20 30)))
+                 (else
+                  (world-set-sky! (world-rgb 30 50 90))
+                  (world-set-sky2! (world-rgb 45 70 110))
+                  (world-set-floor! (world-rgb 55 110 65))
+                  (world-set-floor2! (world-rgb 40 90 50))))
+               (set! *speech*
+                 (string-append "Background -> " (world-bg-style)))
+               (set! *last-act* "bg")
+               (cons #t pet))))))
+
       ; ── teach: /teach feed Hello ──
       ((string=? head "teach")
        (if (game-try-teach! (string-append "teach " args))
@@ -236,6 +294,7 @@
         (string=? head "back") (string=? head "fight") (string=? head "heal")
         (string=? head "status") (string=? head "stats") (string=? head "form")
         (string=? head "help") (string=? head "talk") (string=? head "world")
+        (string=? head "bg") (string=? head "background")
         (string=? head "brain") (string=? head "quit") (string=? head "say")
         (string=? head "teach") (string=? head "atk") (string=? head "attack")
         (string=? head "fire") (string=? head "shoot") (string=? head "weapon")

@@ -1,17 +1,22 @@
 ; lib/world.aura — background + NPC world for aura-pets (business).
 ;
-; World file format (tools/worldgen.py):
+; World file format:
 ;   theme:Name
+;   bg:meadow|cyber|matrix|stars|city|ocean|grid|sunset
 ;   sky:r,g,b  sky2: floor: floor2: star:
 ;   npc:Name|x|y|kind|speech
 ;   prop:tree|x|y
 ;
 ; API:
 ;   (world-reset!) (world-load! path) (world-generate! cols rows)
-;   (world-draw-bg! w h y0 y1) (world-draw-npcs! frame)
-;   (world-theme) (world-npc-count) (world-nearest-speech x y)
+;   (world-draw-bg! w h y0 y1 frame) (world-draw-npcs! frame)
+;   (world-theme) (world-bg-style) (world-set-bg-style! s)
+;   (world-npc-count) (world-nearest-speech x y)
 
 (define *world-theme* "Meadow")
+; Patterned backgrounds (not hard sky/floor stripes):
+;   meadow sunset ocean stars city grid cyber matrix
+(define *bg-style* "meadow")
 (define *world-npcs* '())
 (define *world-props* '())
 ; Packed RGB ints (same layout as canvas rgb) — avoid depending on canvas load order.
@@ -23,10 +28,14 @@
 (define *w-star* 15132415)
 (define *world-path* "/tmp/aura-pets-world.txt")
 (define *world-ok* #f)
+; Cyber/matrix rain: list of (x y speed seed)
+(define *bg-rain* '())
+(define *bg-rain-ready* #f)
 
 (define (world-empty) (substring "x" 0 0))
 
 (define (world-theme) *world-theme*)
+(define (world-bg-style) *bg-style*)
 (define (world-npc-count) (length *world-npcs*))
 (define (world-ok?) *world-ok*)
 (define (world-path) *world-path*)
@@ -35,9 +44,67 @@
   (set! *world-path* p)
   #t)
 
+; Short substring search (theme/style names only — keep n small).
+(define (world-has? s sub)
+  (let ((n (string-length s))
+        (m (string-length sub)))
+    (if (or (= m 0) (> m n)) #f
+      (let loop ((i 0))
+        (if (> (+ i m) n) #f
+          (if (string=? (substring s i (+ i m)) sub) #t
+            (loop (+ i 1))))))))
+
+(define (world-infer-bg-style! name)
+  (let ((t name))
+    (cond
+      ((or (world-has? t "cyber") (world-has? t "Cyber")
+           (world-has? t "matrix") (world-has? t "Matrix")
+           (world-has? t "neon") (world-has? t "Neon")
+           (world-has? t "赛博") (world-has? t "矩阵"))
+       (world-set-bg-style! "cyber"))
+      ((or (world-has? t "star") (world-has? t "Star")
+           (world-has? t "night") (world-has? t "Night")
+           (world-has? t "space") (world-has? t "夜"))
+       (world-set-bg-style! "stars"))
+      ((or (world-has? t "ocean") (world-has? t "Ocean")
+           (world-has? t "beach") (world-has? t "Beach")
+           (world-has? t "sea") (world-has? t "海"))
+       (world-set-bg-style! "ocean"))
+      ((or (world-has? t "city") (world-has? t "City")
+           (world-has? t "urban") (world-has? t "城"))
+       (world-set-bg-style! "city"))
+      ((or (world-has? t "grid") (world-has? t "Grid"))
+       (world-set-bg-style! "grid"))
+      ((or (world-has? t "sunset") (world-has? t "Sunset")
+           (world-has? t "dusk"))
+       (world-set-bg-style! "sunset"))
+      (else (world-set-bg-style! "meadow")))))
+
 ; ── Live mutators (NL / eDSL hot path) ──
 (define (world-set-theme! name)
   (set! *world-theme* name)
+  (world-infer-bg-style! name)
+  (set! *world-ok* #t)
+  #t)
+(define (world-set-bg-style! s)
+  (set! *bg-style*
+    (cond
+      ((or (string=? s "cyber") (string=? s "matrix") (string=? s "neon"))
+       "cyber")
+      ((or (string=? s "stars") (string=? s "star") (string=? s "night"))
+       "stars")
+      ((or (string=? s "ocean") (string=? s "beach") (string=? s "sea"))
+       "ocean")
+      ((or (string=? s "city") (string=? s "urban")) "city")
+      ((string=? s "grid") "grid")
+      ((or (string=? s "sunset") (string=? s "dusk")) "sunset")
+      ((or (string=? s "meadow") (string=? s "park") (string=? s "grass"))
+       "meadow")
+      (else s)))
+  ; Rain only for cyber/matrix; rebuild next draw if needed.
+  (if (or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
+      (set! *bg-rain-ready* #f)
+    (begin (set! *bg-rain* '()) (set! *bg-rain-ready* #t)))
   (set! *world-ok* #t)
   #t)
 (define (world-set-sky! c) (set! *w-sky* c) #t)
@@ -98,6 +165,7 @@
 (define (world-to-file-text)
   (let* ((s0 (string-append
                "theme:" *world-theme* "\n"
+               "bg:" *bg-style* "\n"
                "sky:" (world-rgb-str *w-sky*) "\n"
                "sky2:" (world-rgb-str *w-sky2*) "\n"
                "floor:" (world-rgb-str *w-floor*) "\n"
@@ -127,6 +195,7 @@
 (define (world-to-aura-source)
   (let* ((s0 (string-append
                "(set! *world-theme* \"" *world-theme* "\")\n"
+               "(set! *bg-style* \"" *bg-style* "\")\n"
                "(set! *w-sky* " (number->string *w-sky*) ")\n"
                "(set! *w-sky2* " (number->string *w-sky2*) ")\n"
                "(set! *w-floor* " (number->string *w-floor*) ")\n"
@@ -184,6 +253,7 @@
           (find1 (+ i 1)))))))
 (define (world-reset!)
   (set! *world-theme* "Sunset Meadow")
+  (world-set-bg-style! "sunset")
   ; Small cast — readable + safe on large terminals (bg fill is the heavy cost).
   (set! *world-npcs*
     (list
@@ -200,12 +270,22 @@
       (list "crate" 25 12) (list "wall" 10 11)
       (list "bush" 38 13) (list "rock" 52 13)
       (list "crate" 48 12) (list "bush" 8 12)))
-  (set! *w-sky* (world-rgb 30 50 90))
-  (set! *w-sky2* (world-rgb 45 70 110))
+  (set! *w-sky* (world-rgb 40 30 90))
+  (set! *w-sky2* (world-rgb 90 50 70))
   (set! *w-floor* (world-rgb 55 110 65))
   (set! *w-floor2* (world-rgb 40 90 50))
-  (set! *w-star* (world-rgb 230 235 255))
+  (set! *w-star* (world-rgb 255 220 160))
   (set! *world-ok* #t)
+  #t)
+
+; Apply cyber palette (for LLM / offline "cyber cat" prompt).
+(define (world-apply-cyber-palette!)
+  (set! *w-sky* (world-rgb 0 8 18))
+  (set! *w-sky2* (world-rgb 0 20 35))
+  (set! *w-floor* (world-rgb 10 15 30))
+  (set! *w-floor2* (world-rgb 5 10 20))
+  (set! *w-star* (world-rgb 0 255 120))
+  (world-set-bg-style! "cyber")
   #t)
 
 ; Split path fields for npc: Name|x|y|kind|speech  (exactly 4 bars)
@@ -274,13 +354,15 @@
                   (begin (set! *w-floor2* (parse-rgb (substring line 7 n))) #t)
                 (if (and (>= n 5) (string=? (substring line 0 5) "star:"))
                     (begin (set! *w-star* (parse-rgb (substring line 5 n))) #t)
-                  (if (and (>= n 4) (string=? (substring line 0 4) "npc:"))
-                      (let ((npc (world-parse-npc line)))
-                        (if npc (world-add-npc! npc) #f))
-                    (if (and (>= n 5) (string=? (substring line 0 5) "prop:"))
-                        (let ((pr (world-parse-prop line)))
-                          (if pr (world-add-prop! pr) #f))
-                      #f)))))))))))
+                  (if (and (>= n 3) (string=? (substring line 0 3) "bg:"))
+                      (begin (world-set-bg-style! (substring line 3 n)) #t)
+                    (if (and (>= n 4) (string=? (substring line 0 4) "npc:"))
+                        (let ((npc (world-parse-npc line)))
+                          (if npc (world-add-npc! npc) #f))
+                      (if (and (>= n 5) (string=? (substring line 0 5) "prop:"))
+                          (let ((pr (world-parse-prop line)))
+                            (if pr (world-add-prop! pr) #f))
+                        #f))))))))))))
 
 ; Split file text by newlines and apply.
 ; IMPORTANT: use host (while) — named-let per character is NOT TCO'd in Aura
@@ -369,8 +451,178 @@
 (define *bg-y1* 20)
 (define *bg-total* 0)
 (define *bg-floor-y* 18)
+(define *bg-frame* 0)
+(define *bg-rows* 16)
 
-(define (world-draw-bg! w h y0 y1)
+; Tiny hash for procedural dots (no recursion).
+(define (bg-hash x y f)
+  (modulo (+ (* x 17) (* y 31) (* f 13) (* x y 3)) 64))
+
+; Unpack helpers for soft gradients (r/g/b 0..255).
+(define (bg-r c) (quotient c 65536))
+(define (bg-g c) (quotient (modulo c 65536) 256))
+(define (bg-b c) (modulo c 256))
+(define (bg-lerp a b t256)
+  ; t256 in 0..256
+  (quotient (+ (* a (- 256 t256)) (* b t256)) 256))
+(define (bg-mix ca cb t256)
+  (world-rgb (bg-lerp (bg-r ca) (bg-r cb) t256)
+             (bg-lerp (bg-g ca) (bg-g cb) t256)
+             (bg-lerp (bg-b ca) (bg-b cb) t256)))
+
+; Per-cell (top . bot) colors by style — patterned, not hard stripes.
+(define (bg-cell-colors x y)
+  (let* ((fy *bg-floor-y*)
+         (y0 *bg-y0*)
+         (h (if (<= *bg-rows* 0) 1 *bg-rows*))
+         (t256 (quotient (* (- y y0) 256) h))
+         (f *bg-frame*)
+         (noise (bg-hash x y f))
+         (st *bg-style*))
+    (cond
+      ; ── cyber / matrix: dark void + neon grid (rain drawn as cells after) ──
+      ((or (string=? st "cyber") (string=? st "matrix"))
+       (let* ((gx (= (modulo x 10) 0))
+              (gy (= (modulo y 5) 0))
+              (pulse (modulo (+ f (quotient x 3)) 8))
+              (g (if gx 45 (if gy 28 (+ 6 (modulo noise 12)))))
+              (base (world-rgb 0 g (+ 12 (modulo noise 18))))
+              (base2 (world-rgb 0 (+ 4 (modulo noise 8)) 20))
+              (neon (world-rgb 0 (+ 80 (* pulse 8)) 60)))
+         (if (or gx gy)
+             (cons neon base)
+           (if (>= y fy)
+               (cons (world-rgb 8 12 28) (world-rgb 4 8 18))
+             (cons base base2)))))
+      ; ── night stars: deep sky + twinkles ──
+      ((string=? st "stars")
+       (let* ((sky (bg-mix (world-rgb 4 6 24) (world-rgb 12 10 40) t256))
+              (sky2 (bg-mix (world-rgb 2 4 18) sky 128))
+              (tw (and (< noise 3) (< (modulo (+ x (* y 3) f) 11) 2))))
+         (if (>= y fy)
+             (cons (world-rgb 18 20 40) (world-rgb 10 12 28))
+           (if tw
+               (cons *w-star* sky)
+             (cons sky sky2)))))
+      ; ── ocean / beach: horizon band + wave noise ──
+      ((string=? st "ocean")
+       (let* ((horizon (- fy 3))
+              (wave (modulo (+ x (quotient f 2) (* y 2)) 7)))
+         (cond
+           ((>= y fy)
+            (cons (world-rgb 200 180 120) (world-rgb 170 150 100)))
+           ((>= y horizon)
+            (cons (world-rgb (+ 20 (* wave 8)) (+ 90 (* wave 6)) 180)
+                  (world-rgb 20 70 150)))
+           (else
+            (let ((sky (bg-mix (world-rgb 80 160 230) (world-rgb 180 220 255) t256)))
+              (cons sky (bg-mix sky (world-rgb 100 180 240) 80)))))))
+      ; ── city: skyline blocks near floor ──
+      ((string=? st "city")
+       (let* ((build-h (modulo (+ (* x 5) 3) 6))
+              (skyline (- fy build-h))
+              (win (and (= (modulo x 2) 0) (= (modulo y 2) 0)
+                        (< (modulo (+ x y f) 5) 2)))
+              (sky (bg-mix (world-rgb 20 25 50) (world-rgb 60 40 70) t256)))
+         (cond
+           ((>= y fy)
+            (cons (world-rgb 30 30 40) (world-rgb 20 20 28)))
+           ((>= y skyline)
+            (if win
+                (cons (world-rgb 255 220 80) (world-rgb 40 40 55))
+              (cons (world-rgb 35 38 55) (world-rgb 25 28 42))))
+           (else (cons sky (bg-mix sky (world-rgb 30 30 50) 100))))))
+      ; ── grid: soft cyber grid on dark ──
+      ((string=? st "grid")
+       (let ((gx (= (modulo x 6) 0))
+             (gy (= (modulo y 3) 0)))
+         (if (or gx gy)
+             (cons (world-rgb 0 90 110) (world-rgb 0 40 55))
+           (cons (world-rgb 5 12 22) (world-rgb 3 8 16)))))
+      ; ── sunset: warm gradient sky → green ground with grass dots ──
+      ((string=? st "sunset")
+       (let* ((sky (bg-mix (world-rgb 40 30 90) (world-rgb 255 120 60) t256))
+              (sky2 (bg-mix (world-rgb 90 50 70) (world-rgb 255 180 90) t256))
+              (grass-dot (and (>= y (- fy 1)) (< noise 18))))
+         (if (>= y fy)
+             (if grass-dot
+                 (cons (world-rgb 80 160 70) (world-rgb 50 100 50))
+               (cons *w-floor* *w-floor2*))
+           (if (and (< noise 2) (< y (+ y0 3)))
+               (cons *w-star* sky)
+             (cons sky sky2)))))
+      ; ── meadow (default): soft vertical blend + grass / flower noise ──
+      (else
+       (let* ((sky (bg-mix *w-sky* *w-sky2* t256))
+              (sky2 (bg-mix *w-sky2* *w-floor* (quotient t256 2)))
+              (grass-dot (and (>= y (- fy 2)) (< noise 20)))
+              (flower (and (>= y (- fy 2)) (= noise 1))))
+         (cond
+           ((>= y fy)
+            (if flower
+                (cons (world-rgb 255 120 160) (world-rgb 255 200 80))
+              (if grass-dot
+                  (cons (world-rgb 70 150 70) *w-floor2*)
+                (cons *w-floor* *w-floor2*))))
+           (else
+            (if (and (< noise 2) (< y (+ y0 4)))
+                (cons *w-star* sky)
+              (cons sky sky2)))))))))
+
+; Matrix-style rain (cyber cat) — short list, named-let OK (~24 drops).
+(define (bg-rain-init! w y0 y1)
+  (let ((n (if (< w 40) 12 (if (< w 80) 18 24))))
+    (let loop ((i 0) (acc '()))
+      (if (>= i n)
+          (begin (set! *bg-rain* acc) (set! *bg-rain-ready* #t) #t)
+        (loop (+ i 1)
+              (cons (list (modulo (* i 7) w)
+                          (+ y0 (modulo (* i 3) (if (<= (- y1 y0) 1) 1 (- y1 y0))))
+                          (+ 1 (modulo i 3))
+                          (+ 33 (modulo (* i 17) 90)))
+                    acc))))))
+
+(define (bg-rain-tick! w y0 y1)
+  (set! *bg-rain*
+    (let loop ((ds *bg-rain*) (acc '()))
+      (if (null? ds)
+          (reverse acc)
+        (let* ((d (car ds))
+               (x (car d))
+               (y (car (cdr d)))
+               (sp (car (cdr (cdr d))))
+               (seed (car (cdr (cdr (cdr d)))))
+               (ny (+ y sp))
+               (h (if (<= (- y1 y0) 1) 1 (- y1 y0))))
+          (loop (cdr ds)
+                (cons (list x
+                            (if (>= ny y1) y0 ny)
+                            sp
+                            (modulo (+ seed 11) 90))
+                      acc)))))))
+
+(define (bg-rain-draw! frame)
+  (let ((palette "01#$%&*+=<>/\\|")
+        (plen 14)
+        (g1 (world-rgb 0 220 90))
+        (g0 (world-rgb 0 90 40))
+        (bgc (world-rgb 0 8 18)))
+    (let loop ((ds *bg-rain*))
+      (if (null? ds) #t
+        (let* ((d (car ds))
+               (x (car d))
+               (y (car (cdr d)))
+               (seed (car (cdr (cdr (cdr d)))))
+               (pi (modulo (+ seed frame) plen))
+               (ch (substring palette pi (+ pi 1)))
+               (bright (= (modulo (+ x y frame) 4) 0)))
+          (tui:cell x y ch (if bright g1 g0) bgc 0)
+          (if (> y *bg-y0*)
+              (tui:cell x (- y 1) ch g0 bgc 0)
+            #t)
+          (loop (cdr ds)))))))
+
+(define (world-draw-bg! w h y0 y1 frame)
   (let ((floor-y (- y1 2))
         (rows (- y1 y0)))
     (if (or (<= w 0) (<= rows 0))
@@ -380,27 +632,26 @@
         (set! *bg-y0* y0)
         (set! *bg-y1* y1)
         (set! *bg-floor-y* floor-y)
+        (set! *bg-rows* rows)
+        (set! *bg-frame* (if (number? frame) frame 0))
         (set! *bg-total* (* w rows))
         (set! *bg-i* 0)
         (while (lambda () (< *bg-i* *bg-total*))
                (lambda ()
                  (let* ((i *bg-i*)
                         (x (modulo i *bg-w*))
-                        (y (+ *bg-y0* (quotient i *bg-w*))))
-                   (if (>= y *bg-floor-y*)
-                       (world-px x y *w-floor* *w-floor2*)
-                     (world-px x y *w-sky* *w-sky2*))
+                        (y (+ *bg-y0* (quotient i *bg-w*)))
+                        (pair (bg-cell-colors x y)))
+                   (world-px x y (car pair) (cdr pair))
                    (set! *bg-i* (+ i 1)))))
-        ; stars (sparse, not full-row recursion)
-        (world-px 5 (+ y0 1) *w-star* *w-sky*)
-        (world-px 18 (+ y0 2) *w-star* *w-sky*)
-        (world-px 35 (+ y0 1) *w-star* *w-sky*)
-        (world-px 52 (+ y0 2) *w-star* *w-sky*)
-        (if (> w 70)
-            (world-px 70 (+ y0 1) *w-star* *w-sky*)
-          #t)
-        (if (> w 100)
-            (world-px 100 (+ y0 2) *w-star* *w-sky*)
+        ; Cyber matrix rain overlay (animated glyphs like cyber_cat.aura)
+        (if (or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
+            (begin
+              (if (not *bg-rain-ready*)
+                  (bg-rain-init! w y0 y1)
+                #t)
+              (bg-rain-tick! w y0 y1)
+              (bg-rain-draw! *bg-frame*))
           #t)
         (world-draw-props!)
         #t))))
