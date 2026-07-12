@@ -29,7 +29,7 @@
 (define *prompt-submit* "x")
 (define *prompt-hot* "x")
 (define *prompt-cursor* 0)
-(define *prompt-width* 44)
+(define *prompt-width* 76)
 
 ; Fresh empty — avoid "" literals (require can clobber empty string heap slots).
 (define (prompt-empty)
