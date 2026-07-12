@@ -427,36 +427,110 @@
     (world-px (+ x 1) y g2 g)
     #t))
 
-; Simple NPC blobs + label
+; Vertical bounce: -1 / 0 / 1 cycle (was always 0 — looked frozen).
+(define (npc-bob frame i)
+  (let ((ph (modulo (+ frame (* i 3)) 6)))
+    (cond
+      ((or (= ph 0) (= ph 3)) 0)
+      ((or (= ph 1) (= ph 2)) -1)
+      (else 1))))
+
+; Horizontal wiggle while idle-drawing (before wander mutates base x).
+(define (npc-wiggle frame i)
+  (let ((ph (modulo (+ frame (* i 5)) 12)))
+    (cond
+      ((< ph 3) 0)
+      ((< ph 6) 1)
+      ((< ph 9) 0)
+      (else -1))))
+
+; Palette by name length so NPCs look different.
+(define (npc-fur-colors kind name)
+  (let ((h (modulo (* (string-length name) 37) 5)))
+    (if (string=? kind "decor")
+        (cons (world-rgb 180 180 200) (world-rgb 140 140 160))
+      (cond
+        ((= h 0) (cons (world-rgb 255 200 120) (world-rgb 240 160 90)))
+        ((= h 1) (cons (world-rgb 255 160 180) (world-rgb 230 120 150)))
+        ((= h 2) (cons (world-rgb 160 220 255) (world-rgb 100 180 230)))
+        ((= h 3) (cons (world-rgb 180 255 160) (world-rgb 120 210 100)))
+        (else (cons (world-rgb 255 230 140) (world-rgb 230 190 80)))))))
+
+; Draw NPCs with bob + wiggle + blink + phase pose.
 (define (world-draw-npcs! frame)
-  (let loop ((xs *world-npcs*))
+  (let loop ((xs *world-npcs*) (i 0))
     (if (null? xs) #t
       (begin
         (let* ((n (car xs))
                (name (car n))
-               (x (car (cdr n)))
-               (y (car (cdr (cdr n))))
+               (bx (car (cdr n)))
+               (by (car (cdr (cdr n))))
                (kind (car (cdr (cdr (cdr n)))))
-               (bob (if (= (modulo frame 8) 0) 0
-                      (if (= (modulo frame 8) 4) 0 0))))
-          (world-draw-npc-sprite! x (+ y bob) kind name)
+               (bob (npc-bob frame i))
+               (wig (npc-wiggle frame i))
+               (x (+ bx wig))
+               (y (+ by bob))
+               (blink (= (modulo (+ frame (* i 7)) 20) 0)))
+          (world-draw-npc-sprite! x y kind name frame i blink)
           (draw-text x (+ y 2) name (world-rgb 200 220 255) 0))
-        (loop (cdr xs))))))
+        (loop (cdr xs) (+ i 1))))))
 
-(define (world-draw-npc-sprite! x y kind name)
-  (let ((fur (if (string=? kind "decor")
-                 (world-rgb 180 180 200)
-               (world-rgb 255 200 120)))
-        (fur2 (world-rgb 240 160 90))
-        (eye (world-rgb 40 40 50)))
-    ; mini creature 3x2 cells
+(define (world-draw-npc-sprite! x y kind name frame i blink)
+  (let* ((cols (npc-fur-colors kind name))
+         (fur (car cols))
+         (fur2 (cdr cols))
+         (eye (if blink (world-rgb 40 40 50) (world-rgb 20 20 30)))
+         (eye2 (if blink fur (world-rgb 255 255 255)))
+         (phase (modulo (+ frame (* i 2)) 4)))
+    ; body
     (world-px x y fur fur2)
     (world-px (+ x 1) y fur fur)
     (world-px (+ x 2) y fur2 fur)
     (world-px x (+ y 1) fur2 fur)
-    (world-px (+ x 1) (+ y 1) eye fur)
+    ; face / eyes (blink closes)
+    (world-px (+ x 1) (+ y 1) eye eye2)
     (world-px (+ x 2) (+ y 1) fur fur2)
+    ; leg / hop pose — alternate feet
+    (if (or (= phase 0) (= phase 1))
+        (world-px x (+ y 2) fur2 fur)
+      (world-px (+ x 2) (+ y 2) fur fur2))
+    ; ear / hat bobble on even phase
+    (if (or (= phase 0) (= phase 2))
+        (world-px (+ x 1) (- y 1) fur2 fur)
+      (world-px x (- y 1) fur fur2))
     #t))
+
+; Slow wander: mutate base x every few frames so NPCs roam the room.
+; cols / y0 / y1 keep them on the scene band.
+(define (world-tick-npcs! frame cols y0 y1)
+  (if (not (= (modulo frame 8) 0))
+      #t
+    (begin
+      (set! *world-npcs*
+        (let loop ((xs *world-npcs*) (i 0) (acc '()))
+          (if (null? xs)
+              (reverse acc)
+            (let* ((n (car xs))
+                   (name (car n))
+                   (x (car (cdr n)))
+                   (y (car (cdr (cdr n))))
+                   (kind (car (cdr (cdr (cdr n)))))
+                   (speech (car (cdr (cdr (cdr (cdr n))))))
+                   ; step left/right alternating by index + frame
+                   (dir (if (= (modulo (+ (quotient frame 8) i) 2) 0) 1 -1))
+                   (nx (let ((v (+ x dir)))
+                         (if (< v 2) 2
+                           (if (> v (- cols 5)) (- cols 5) v))))
+                   ; slight vertical drift for friends only
+                   (ny (if (and (string=? kind "friend")
+                                (= (modulo (+ frame i) 24) 0))
+                           (let ((v (+ y (if (= (modulo i 2) 0) 1 -1))))
+                             (if (< v (+ y0 1)) (+ y0 1)
+                               (if (> v (- y1 4)) (- y1 4) v)))
+                         y)))
+              (loop (cdr xs) (+ i 1)
+                    (cons (list name nx ny kind speech) acc))))))
+      #t)))
 
 ; Nearest friend NPC speech within manhattan dist 6
 (define (world-nearest-speech px py)

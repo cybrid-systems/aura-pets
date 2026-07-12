@@ -99,7 +99,8 @@
   (draw-text 1 2
              (string-append "type words | 1 2 3 e g t q  ["
                             (world-theme) " npcs="
-                            (number->string (world-npc-count)) "]")
+                            (number->string (world-npc-count))
+                            (if (nl-busy?) " ...]" "]"))
              HUD-DIM BG)
   #t)
 
@@ -141,19 +142,22 @@
     #t))
 
 ; After care cmds, handle world gen / talk / free-text NL director.
+; LLM jobs are async: start background Python, keep moving; poll in play-step!.
 (define (apply-cmd-world pet cmd)
   (cond
     ((or (string=? cmd "world") (string=? cmd "gen") (string=? cmd "g"))
-     (prompt-set-log! "Generating world via MiniMax...")
-     (plog "world" "generate-start")
-     (world-generate! W H)
-     (world-aura-commit!)
-     (game-set-speech!
-       (string-append "Welcome to " (world-theme) "!"))
-     (prompt-set-log! (game-speech))
-     (plog "world" (string-append "theme=" (world-theme)
-                                  " npcs=" (number->string (world-npc-count))))
-     (cons #t pet))
+     (if (nl-busy?)
+         (begin
+           (game-set-speech! "Still thinking... walk around!")
+           (prompt-set-log! (game-speech))
+           (cons #t pet))
+       (begin
+         (prompt-set-log! "Building world... (async)")
+         (plog "world" "generate-async-start")
+         (nl-start-worldgen-async! W H)
+         (game-set-speech! (nl-last-say))
+         (prompt-set-log! (game-speech))
+         (cons #t pet))))
     ((or (string=? cmd "talk") (string=? cmd "t"))
      (let ((s (world-nearest-speech *p-x* *p-y*)))
        (if s
@@ -166,19 +170,20 @@
            (game-set-speech! "No one nearby. Walk closer!")
            (prompt-set-log! (game-speech))
            (cons #t pet)))))
-    ; Free language → LLM director → mutate world/eDSL + AST commit
+    ; Free language → async LLM director (non-blocking)
     ((nl-should-handle? cmd)
-     (prompt-set-log! "Thinking...")
-     (plog "nl" (string-append "in=" cmd))
-     (let ((msg (nl-handle! cmd W H)))
-       (game-set-speech! msg)
-       (prompt-set-log! msg)
-       (plog "nl" (string-append "say=" msg
-                                 " theme=" (world-theme)
-                                 " npcs=" (number->string (world-npc-count))
-                                 " src=" (nl-last-src)
-                                 " brain=" (edsl-show)))
-       (cons #t pet)))
+     (if (nl-busy?)
+         (begin
+           (game-set-speech! "Still thinking... arrows still work!")
+           (prompt-set-log! (game-speech))
+           (plog "nl" "busy-reject")
+           (cons #t pet))
+       (begin
+         (plog "nl" (string-append "async-in=" cmd))
+         (nl-start-async! cmd W H)
+         (game-set-speech! (nl-last-say))
+         (prompt-set-log! (game-speech))
+         (cons #t pet))))
     (else (apply-cmd pet cmd))))
 
 (define (apply-cmd pet cmd)
@@ -332,9 +337,27 @@
                  #t
                (play-stop! (string-append "submit-stop=" cmd)))))))
       (else #t))))
+; Apply finished async NL / worldgen without blocking the move loop.
+(define (play-poll-async!)
+  (let ((msg (nl-poll!)))
+    (if msg
+        (begin
+          (game-set-speech! msg)
+          (prompt-set-log! msg)
+          (plog "nl" (string-append "async-done say=" msg
+                                    " theme=" (world-theme)
+                                    " npcs=" (number->string (world-npc-count))
+                                    " src=" (nl-last-src)
+                                    " brain=" (edsl-show)))
+          #t)
+      #f)))
+
 (define (play-step!)
   (anim-tick!)
   (pet-render-sync)
+  ; NPC roam + bob while player is free (including during LLM wait)
+  (world-tick-npcs! *p-frame* W SCENE-Y0 SCENE-Y1)
+  (play-poll-async!)
   (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
   (play-handle-event! (tui:read-event 80))
   (set! *p-frame* (+ *p-frame* 1))
@@ -367,14 +390,20 @@
   (plog-start! (plog-path))
   (plog "info" (string-append "term=" (number->string W) "x" (number->string H)
                               " " (pet-snap *p-pet*)))
-  ; Load / generate background + NPCs (MiniMax if key present)
+  ; Instant offline/default world so play never blocks on startup LLM.
   (world-set-path! "/tmp/aura-pets-world.txt")
-  (plog "world" "generate-or-load")
-  (world-generate! W H)
+  (plog "world" "load-or-offline-then-async")
+  (if (file-exists? "/tmp/aura-pets-world.txt")
+      (world-load! "/tmp/aura-pets-world.txt")
+    (world-reset!))
+  ; Kick MiniMax worldgen in background (poll applies when ready).
+  (nl-start-worldgen-async! W H)
   (plog "world" (string-append "theme=" (world-theme)
-                               " npcs=" (number->string (world-npc-count))))
+                               " npcs=" (number->string (world-npc-count))
+                               " async=1"))
   (game-set-speech!
-    (string-append "Welcome to " (world-theme) "! Walk to friends + t talk"))
+    (string-append "Welcome! " (world-theme)
+                   " — type words anytime (async)"))
   (prompt-set-log! (game-speech))
   ; Host (while pred body) runs in C++ — no Scheme stack growth per frame.
   ; Named-let (iter) caused SIGSEGV in eval_flat after ~800 frames.

@@ -12,12 +12,19 @@
 
 (define *nl-path* "/tmp/aura-pets-nl.txt")
 (define *nl-ctx-path* "/tmp/aura-pets-nl-ctx.txt")
+(define *nl-done-path* "/tmp/aura-pets-nl.done")
+(define *nl-err-path* "/tmp/aura-pets-nl.err")
 (define *nl-last-say* "")
 (define *nl-last-src* "none")
 (define *nl-did-aura* #f)
+; Async job: #f | "nl" | "world"
+(define *nl-busy* #f)
+(define *nl-pending-text* "")
 
 (define (nl-last-say) *nl-last-say*)
 (define (nl-last-src) *nl-last-src*)
+(define (nl-busy?) (if *nl-busy* #t #f))
+(define (nl-busy-kind) (if *nl-busy* *nl-busy* "idle"))
 
 (define (nl-repo-root)
   (let ((env (try (getenv "AURA_PETS_ROOT") (catch (e) #f))))
@@ -38,26 +45,29 @@
       (begin (write-file *nl-ctx-path* s) #t)
       (catch (e) #f))))
 
-; Shell to Python translator.
-(define (nl-generate! user-text cols rows)
+; Build python argv (shared by sync + async).
+(define (nl-py-cmd user-text cols rows)
   (let* ((root (nl-repo-root))
          (py (string-append root "/tools/nl_command.py"))
-         ; Escape double quotes in user text for shell.
          (safe (nl-shell-escape user-text))
          (off (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f)))
          (off-flag (if (and off (string? off) (> (string-length off) 0)
                             (not (string=? off "0")))
                        " --offline"
-                     ""))
-         (cmd (string-append
-                "python3 " py
-                " --text \"" safe "\""
-                " --out " *nl-path*
-                " --cols " (number->string cols)
-                " --rows " (number->string rows)
-                " --context-file " *nl-ctx-path*
-                off-flag
-                " 2>>/tmp/aura-pets-debug.log")))
+                     "")))
+    (string-append
+      "python3 " py
+      " --text \"" safe "\""
+      " --out " *nl-path*
+      " --cols " (number->string cols)
+      " --rows " (number->string rows)
+      " --context-file " *nl-ctx-path*
+      off-flag
+      " 2>>/tmp/aura-pets-debug.log")))
+
+; Sync shell (tests / offline tools). Blocks until Python exits.
+(define (nl-generate! user-text cols rows)
+  (let ((cmd (nl-py-cmd user-text cols rows)))
     (nl-write-context!)
     (try
       (begin
@@ -68,6 +78,106 @@
         (begin
           (set! *nl-last-src* "err")
           #f)))))
+
+; Async: launch Python in background; play loop keeps running.
+; Done when *nl-done-path* appears. Returns #t if job started.
+(define (nl-start-async! user-text cols rows)
+  (if *nl-busy*
+      #f
+    (begin
+      (set! *nl-pending-text* user-text)
+      (set! *nl-busy* "nl")
+      (set! *nl-last-say* "Thinking... (move freely)")
+      (set! *nl-last-src* "async")
+      (nl-write-context!)
+      (try
+        (begin
+          ; Clear stale markers
+          (shell (string-append "rm -f " *nl-done-path* " " *nl-err-path*))
+          (shell
+            (string-append
+              "(" (nl-py-cmd user-text cols rows)
+              " && touch " *nl-done-path*
+              ") || touch " *nl-err-path*
+              " &"))
+          #t)
+        (catch (e)
+          (begin
+            (set! *nl-busy* #f)
+            (set! *nl-last-src* "err")
+            #f))))))
+
+; Async full world regen (tools/worldgen.py).
+(define (nl-start-worldgen-async! cols rows)
+  (if *nl-busy*
+      #f
+    (let* ((root (nl-repo-root))
+           (py (string-append root "/tools/worldgen.py"))
+           (out "/tmp/aura-pets-world.txt")
+           (cmd (string-append
+                  "python3 " py
+                  " --out " out
+                  " --cols " (number->string cols)
+                  " --rows " (number->string rows)
+                  " 2>>/tmp/aura-pets-debug.log")))
+      (set! *nl-busy* "world")
+      (set! *nl-last-say* "Building world... (you can move)")
+      (set! *nl-last-src* "async-world")
+      (try
+        (begin
+          (shell (string-append "rm -f " *nl-done-path* " " *nl-err-path*))
+          (shell
+            (string-append
+              "(" cmd " && touch " *nl-done-path*
+              ") || touch " *nl-err-path* " &"))
+          #t)
+        (catch (e)
+          (begin (set! *nl-busy* #f) #f))))))
+
+; Finish apply after async job. Returns speech string, or #f if still pending.
+(define (nl-poll!)
+  (if (not *nl-busy*)
+      #f
+    (if (file-exists? *nl-err-path*)
+        (begin
+          (set! *nl-busy* #f)
+          (set! *nl-last-src* "async-err")
+          (set! *nl-last-say* "Hmm, thinking failed. Try again!")
+          (try (shell (string-append "rm -f " *nl-err-path*)) (catch (e) #f))
+          *nl-last-say*)
+      (if (file-exists? *nl-done-path*)
+          (let ((kind *nl-busy*))
+            (set! *nl-busy* #f)
+            (try (shell (string-append "rm -f " *nl-done-path*)) (catch (e) #f))
+            (if (string=? kind "world")
+                (begin
+                  (world-load! "/tmp/aura-pets-world.txt")
+                  (world-aura-commit!)
+                  (set! *nl-last-src* "async-world-ok")
+                  (set! *nl-last-say*
+                    (string-append "Welcome to " (world-theme) "!"))
+                  *nl-last-say*)
+              (begin
+                (set! *nl-last-say* "")
+                (set! *nl-did-aura* #f)
+                (if (file-exists? *nl-path*)
+                    (begin
+                      (nl-apply-file! *nl-path*)
+                      (if (not *nl-did-aura*)
+                          (begin (edsl-aura-commit!) (world-aura-commit!))
+                        #t)
+                      (if (= (string-length *nl-last-say*) 0)
+                          (set! *nl-last-say*
+                            (string-append "OK " (world-theme)
+                              " npcs=" (number->string (world-npc-count))))
+                        #t)
+                      (set! *nl-last-src* "async-ok")
+                      *nl-last-say*)
+                  (begin
+                    (set! *nl-last-say* "NL tool failed.")
+                    (set! *nl-last-src* "async-miss")
+                    *nl-last-say*)))))
+        #f))))
 
 ; Minimal shell escape: strip double quotes and backslashes.
 (define (nl-shell-escape s)

@@ -36,13 +36,13 @@ Type English in the bottom prompt and press Enter:
 > make a night beach and teach play Splash!
 ```
 
-Pipeline:
+Pipeline (async — cat keeps moving while LLM thinks):
 
-1. `tools/nl_command.py` (MiniMax-M3) → structured ops file  
-2. `lib/nl-cmd.aura` applies ops: theme/colors/NPC/prop + `edsl-teach!`  
-3. Live hot update: rewrite `*edsl-rules*` / `*world-*` in-process (eDSL AST-as-data)  
-4. `ast:snapshot` + side files (`/tmp/aura-pets-edsl.aura`, world file) for Aura version points  
-5. Next frame redraws — no process restart  
+1. Enter free text → background `python3 tools/nl_command.py … &`  
+2. Play loop polls `/tmp/aura-pets-nl.done` each frame; arrows still work  
+3. On done: apply ops → `*edsl-rules*` / `*world-*` hot rewrite  
+4. `ast:snapshot` + side files for Aura version points  
+5. NPCs bob / wiggle / wander every few frames  
 
 > Note: mid-session `set-code` is intentionally avoided; replacing the workspace flat invalidates loaded TUI closures. Snapshot + in-process eDSL is the safe hot path.
 
