@@ -1,0 +1,125 @@
+; lib/llm-client.aura — MiniMax (OpenAI-compatible) client in pure Aura.
+;
+; Uses core primitives: getenv, read-file, http-post, json-encode, json-get-string.
+; Progressive replacement for tools/*.py network path.
+;
+; (llm-load-key) → string | #f
+; (llm-chat system user) → content-string | #f
+; (llm-chat-worldgen cols rows) → content | #f
+; (llm-chat-nl text cols rows context) → content | #f
+
+(define *llm-base*
+  (let ((e (try (getenv "MINIMAX_BASE_URL") (catch (e) #f))))
+    (if (and e (string? e) (> (string-length e) 0))
+        e
+      "https://api.minimaxi.com/v1")))
+
+(define *llm-model*
+  (let ((e (try (getenv "MINIMAX_MODEL") (catch (e) #f))))
+    (if (and e (string? e) (> (string-length e) 0))
+        e
+      "MiniMax-M3")))
+
+(define (llm-key-path-candidates)
+  (list
+    (let ((h (try (getenv "HOME") (catch (e) "/home/dev"))))
+      (string-append h "/code/keys/minimax"))
+    (let ((h (try (getenv "HOME") (catch (e) "/home/dev"))))
+      (string-append h "/code/key/minimax"))
+    "/home/dev/code/keys/minimax"
+    "/home/dev/code/key/minimax"))
+
+; First non-empty, non-# line; support KEY=sk-... form.
+(define (llm-parse-key-file path)
+  (try
+    (if (not (file-exists? path))
+        #f
+      (let* ((text (read-file path))
+             (n (string-length text)))
+        (let loop ((i 0) (start 0))
+          (if (> i n)
+              #f
+            (if (or (= i n)
+                    (string=? (substring text i (+ i 1)) "\n"))
+                (let ((line (if (>= start i)
+                                (substring "x" 0 0)
+                              (substring text start i))))
+                  ; trim spaces
+                  (let* ((line (llm-trim line))
+                         (ok (and (> (string-length line) 0)
+                                  (not (string=? (substring line 0 1) "#")))))
+                    (if ok
+                        (if (and (> (string-length line) 3)
+                                 (llm-contains-eq? line))
+                            (llm-trim (llm-after-eq line))
+                          line)
+                      (if (= i n)
+                          #f
+                        (loop (+ i 1) (+ i 1))))))
+              (loop (+ i 1) start))))))
+    (catch (e) #f)))
+
+(define (llm-trim s)
+  (let ((n (string-length s)))
+    (let loop-l ((i 0))
+      (if (and (< i n) (string=? (substring s i (+ i 1)) " "))
+          (loop-l (+ i 1))
+        (let loop-r ((j n))
+          (if (and (> j i) (string=? (substring s (- j 1) j) " "))
+              (loop-r (- j 1))
+            (if (>= i j) (substring "x" 0 0) (substring s i j))))))))
+
+(define (llm-contains-eq? s)
+  (let ((n (string-length s)))
+    (let loop ((i 0))
+      (if (>= i n) #f
+        (if (string=? (substring s i (+ i 1)) "=") #t
+          (loop (+ i 1)))))))
+
+(define (llm-after-eq s)
+  (let ((n (string-length s)))
+    (let loop ((i 0))
+      (if (>= i n) s
+        (if (string=? (substring s i (+ i 1)) "=")
+            (substring s (+ i 1) n)
+          (loop (+ i 1)))))))
+
+(define (llm-load-key)
+  (let ((env (try (getenv "MINIMAX_API_KEY") (catch (e) #f))))
+    (if (and env (string? env) (> (string-length env) 0))
+        env
+      (let ((env2 (try (getenv "OPENAI_API_KEY") (catch (e) #f))))
+        (if (and env2 (string? env2) (> (string-length env2) 0))
+            env2
+          (let loop ((xs (llm-key-path-candidates)))
+            (if (null? xs) #f
+              (let ((k (llm-parse-key-file (car xs))))
+                (if k k (loop (cdr xs)))))))))))
+
+; OpenAI-compatible chat. Returns assistant content string or #f.
+(define (llm-chat system-prompt user-prompt)
+  (let ((key (llm-load-key)))
+    (if (not key)
+        #f
+      (try
+        (let* ((url (string-append *llm-base* "/chat/completions"))
+               (msgs (list
+                       (hash "role" "system" "content" system-prompt)
+                       (hash "role" "user" "content" user-prompt)))
+               (body (json-encode
+                       (hash "model" *llm-model*
+                             "messages" msgs
+                             "temperature" 0.8
+                             "max_tokens" 900
+                             "thinking" (hash "type" "disabled"))))
+               (raw (http-post url body key)))
+          (if (or (not raw) (not (string? raw)) (= (string-length raw) 0))
+              #f
+            (let ((content (json-get-string raw "content")))
+              (if (and content (string? content) (> (string-length content) 0))
+                  content
+                #f))))
+        (catch (e) #f)))))
+
+(define (llm-available?)
+  (if (llm-load-key) #t #f))

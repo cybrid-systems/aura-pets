@@ -157,6 +157,28 @@ Kids should *feel* the pet’s brain and world are alive code, not just chat tex
 
 Principle: **mutate data the TUI already draws** every frame. That *is* hot update. Full `mutate:set-body` waits for engine-safe mid-session rebind.
 
+## Pure-Aura tool path (Python retired)
+
+Worldgen + NL director are **Aura modules** that exercise language surface area:
+
+| Layer | Aura primitives / libs |
+|-------|------------------------|
+| Key I/O | `getenv`, `read-file`, `file-exists?` |
+| LLM HTTP | `http-post`, `json-encode`, `json-get-string` (`lib/llm-client.aura`) |
+| Offline world | pure string builders (`lib/worldgen-engine.aura`) |
+| NL ops | keyword heuristics + LLM (`lib/nl-engine.aura`) |
+| Async | child `AURA_BIN` via `shell` + done-file (`lib/aura-jobs.aura`) |
+| Apply | in-process `world-load!` / `edsl-teach!` (AST-as-data) |
+
+Gaps closed by using / extending stdlib rather than Python:
+
+- OpenAI-compatible chat body → `json-encode` + nested `hash`
+- Auth → `http-post` third arg (`Bearer` added by runtime)
+- Content extract → `json-get-string` on raw response
+- Background work → Aura subprocess (same interpreter as the game)
+
+`tools/*.py` are thin shims that shell to Aura for old muscle memory only.
+
 ## Iteration roadmap
 
 | Round | Goal | Exit criteria |

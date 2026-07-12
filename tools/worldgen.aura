@@ -1,0 +1,31 @@
+; tools/worldgen.aura — CLI entry (pure Aura). Prefer over tools/worldgen.py
+;
+;   AURA_PETS_ROOT=... AURA_BIN=... \
+;   echo '(load "tools/worldgen.aura") (worldgen-cli!)' | aura
+;
+; Env:
+;   AURA_PETS_WG_OUT   default /tmp/aura-pets-world.txt
+;   AURA_PETS_WG_COLS  default 80
+;   AURA_PETS_WG_ROWS  default 24
+;   AURA_PETS_NL_OFFLINE=1  force offline
+
+(define (worldgen-cli!)
+  (let* ((root (try (getenv "AURA_PETS_ROOT") (catch (e) ".")))
+         (out (try (getenv "AURA_PETS_WG_OUT")
+                   (catch (e) "/tmp/aura-pets-world.txt")))
+         (cols (try (string->number (getenv "AURA_PETS_WG_COLS"))
+                    (catch (e) 80)))
+         (rows (try (string->number (getenv "AURA_PETS_WG_ROWS"))
+                    (catch (e) 24)))
+         (off (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f)))
+         (offline? (and off (string? off) (> (string-length off) 0)
+                        (not (string=? off "0")))))
+    (load (string-append root "/lib/llm-client.aura"))
+    (load (string-append root "/lib/worldgen-engine.aura"))
+    (worldgen-run! (if (number? cols) cols 80)
+                   (if (number? rows) rows 24)
+                   (if (string? out) out "/tmp/aura-pets-world.txt")
+                   offline?)
+    (display out)
+    (newline)
+    #t))

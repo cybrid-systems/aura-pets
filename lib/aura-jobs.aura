@@ -1,0 +1,84 @@
+; lib/aura-jobs.aura — run Aura (not Python) background jobs for LLM/worldgen.
+;
+; Replaces: python3 tools/worldgen.py / nl_command.py
+; Uses: AURA_BIN + AURA_STDLIB_DIR from env (set by run.sh).
+
+(define (jobs-aura-bin)
+  (let ((e (try (getenv "AURA_BIN") (catch (e) #f))))
+    (if (and e (string? e) (> (string-length e) 0) (file-exists? e))
+        e
+      (if (file-exists? "/home/dev/code/grok-dev/aura-grok/build/aura")
+          "/home/dev/code/grok-dev/aura-grok/build/aura"
+        "aura"))))
+
+(define (jobs-pets-root)
+  (let ((e (try (getenv "AURA_PETS_ROOT") (catch (e) #f))))
+    (if (and e (string? e) (> (string-length e) 0))
+        e
+      (if (file-exists? "/home/dev/code/aura-pets/lib/llm-client.aura")
+          "/home/dev/code/aura-pets"
+        "."))))
+
+(define (jobs-escape s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (acc (substring "x" 0 0)))
+      (if (>= i n) acc
+        (let ((ch (substring s i (+ i 1))))
+          (if (or (string=? ch "\"") (string=? ch "\\") (string=? ch "$")
+                  (string=? ch "`") (string=? ch "\n") (string=? ch "'"))
+              (loop (+ i 1) acc)
+            (loop (+ i 1) (string-append acc ch))))))))
+
+; Background: generate world via Aura child process.
+(define (jobs-start-worldgen! cols rows out done err)
+  (let* ((root (jobs-pets-root))
+         (bin (jobs-aura-bin))
+         (off (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f)))
+         (offline? (and off (string? off) (> (string-length off) 0)
+                        (not (string=? off "0"))))
+         (expr
+           (string-append
+             "(begin "
+             "(load \"" root "/lib/llm-client.aura\") "
+             "(load \"" root "/lib/worldgen-engine.aura\") "
+             "(worldgen-run! " (number->string cols) " " (number->string rows)
+             " \"" out "\" " (if offline? "#t" "#f") ") "
+             ")"))
+         (cmd
+           (string-append
+             "rm -f " done " " err "; "
+             "( echo '" expr "' | " bin
+             " >>/tmp/aura-pets-debug.log 2>&1 "
+             " && touch " done
+             " || touch " err
+             " ) &")))
+    (try (begin (shell cmd) #t) (catch (e) #f))))
+
+; Background: NL director via Aura child.
+(define (jobs-start-nl! text cols rows out done err)
+  (let* ((root (jobs-pets-root))
+         (bin (jobs-aura-bin))
+         (safe (jobs-escape text))
+         (off (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f)))
+         (offline? (and off (string? off) (> (string-length off) 0)
+                        (not (string=? off "0"))))
+         ; prefer pure offline in-process when forced offline (no child)
+         (expr
+           (string-append
+             "(begin "
+             "(load \"" root "/lib/llm-client.aura\") "
+             "(load \"" root "/lib/worldgen-engine.aura\") "
+             "(load \"" root "/lib/nl-engine.aura\") "
+             "(nl-engine-run! \"" safe "\" "
+             (number->string cols) " " (number->string rows)
+             " \"" out "\" " (if offline? "#t" "#f") ") "
+             ")"))
+         (cmd
+           (string-append
+             "rm -f " done " " err "; "
+             "( echo '" expr "' | " bin
+             " >>/tmp/aura-pets-debug.log 2>&1 "
+             " && touch " done
+             " || touch " err
+             " ) &")))
+    (try (begin (shell cmd) #t) (catch (e) #f))))

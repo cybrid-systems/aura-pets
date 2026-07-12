@@ -1,0 +1,146 @@
+; lib/worldgen-engine.aura — world line-file generation in pure Aura.
+;
+; (worldgen-offline cols rows) → text
+; (worldgen-run! cols rows out-path offline?) → #t/#f  writes file
+;
+; Online path: llm-client → MiniMax → best-effort keep lines (sanitize light).
+
+; Depends: llm-client (for online), write-file
+
+(define *wg-system*
+  (string-append
+    "You design cute kid-safe virtual pet game worlds for a terminal pixel game.\n"
+    "Reply with ONLY plain text lines (no markdown):\n"
+    "theme:<name>\nsky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
+    "npc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
+    "prop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
+    "Rules: 12-20 npc (max 24), 16-28 prop (max 32). ASCII names. "
+    "x in [2,COLS-4], y in [4,ROWS-7]. Kid-safe."))
+
+(define (worldgen-offline cols rows)
+  (let* ((floor-y (if (< (- rows 6) 8) 8 (- rows 6)))
+         (names
+           (list
+             (list "Bunny" "friend" "Hi! Want to play?")
+             (list "Bird" "friend" "Chirp! Nice day!")
+             (list "Frog" "friend" "Ribbit~")
+             (list "Fox" "friend" "Sly hi!")
+             (list "Owl" "friend" "Hoo there!")
+             (list "Bear" "friend" "Hug?")
+             (list "Duck" "friend" "Quack!")
+             (list "Cat" "friend" "Meow~")
+             (list "Pup" "friend" "Woof!")
+             (list "Deer" "friend" "Soft step.")
+             (list "Pip" "decor" "Spark!")
+             (list "Dot" "decor" "Boop!")
+             (list "Bean" "decor" "Tiny!")
+             (list "Moth" "decor" "Flutter")
+             (list "Bug" "decor" "Crawl")
+             (list "Star" "decor" "Twinkle")
+             (list "Mint" "decor" "Fresh!")
+             (list "Coco" "friend" "Hello!")
+             (list "Lark" "friend" "Sing!")
+             (list "Moss" "decor" "Green!")))
+         (props
+           (list "tree" "tree" "tree" "flower" "flower" "flower" "flower"
+                 "crate" "crate" "crate" "wall" "wall" "wall"
+                 "bush" "bush" "bush" "rock" "rock" "crate" "bush"))
+         (x-span (if (< (- cols 8) 8) 8 (- cols 8)))
+         (y-span (if (< (- floor-y 6) 4) 4 (- floor-y 6)))
+         (s0 (string-append
+               "theme:Sunset Meadow\n"
+               "sky:30,50,90\nsky2:45,70,110\n"
+               "floor:55,110,65\nfloor2:40,90,50\nstar:230,235,255\n")))
+    (let loop ((xs names) (i 0) (acc s0))
+      (if (null? xs)
+          (let loop2 ((ps props) (j 0) (acc2 acc))
+            (if (null? ps)
+                acc2
+              (let ((x (+ 3 (modulo (* j 7) (if (< (- cols 6) 6) 6 (- cols 6)))))
+                    (y (if (< (- floor-y (modulo j 4)) 5)
+                           5
+                         (- floor-y (modulo j 4)))))
+                (loop2 (cdr ps) (+ j 1)
+                       (string-append acc2 "prop:" (car ps) "|"
+                                      (number->string x) "|"
+                                      (number->string y) "\n")))))
+        (let* ((n (car xs))
+               (x (+ 4 (modulo (* i 5) x-span)))
+               (y (+ 5 (modulo (* i 3) y-span))))
+          (loop (cdr xs) (+ i 1)
+                (string-append acc
+                  "npc:" (car n) "|" (number->string x) "|"
+                  (number->string y) "|" (car (cdr n)) "|"
+                  (car (cdr (cdr n))) "\n")))))))
+
+; Light keep: only lines that look like world format; drop rest.
+(define (worldgen-keep-line? line)
+  (let ((n (string-length line)))
+    (if (= n 0) #f
+      (or (and (>= n 6) (string=? (substring line 0 6) "theme:"))
+          (and (>= n 4) (string=? (substring line 0 4) "sky:"))
+          (and (>= n 5) (string=? (substring line 0 5) "sky2:"))
+          (and (>= n 6) (string=? (substring line 0 6) "floor:"))
+          (and (>= n 7) (string=? (substring line 0 7) "floor2:"))
+          (and (>= n 5) (string=? (substring line 0 5) "star:"))
+          (and (>= n 4) (string=? (substring line 0 4) "npc:"))
+          (and (>= n 5) (string=? (substring line 0 5) "prop:"))))))
+
+(define (worldgen-filter-text text cols rows)
+  (let ((n (string-length text))
+        (max-npc 24)
+        (max-prop 32))
+    (let loop ((i 0) (start 0) (acc (substring "x" 0 0))
+               (nn 0) (np 0))
+      (if (> i n)
+          acc
+        (if (or (= i n) (string=? (substring text i (if (= i n) i (+ i 1))) "\n"))
+            (let ((line (if (>= start i) (substring "x" 0 0)
+                          (substring text start i))))
+              (if (worldgen-keep-line? line)
+                  (let ((is-npc (and (>= (string-length line) 4)
+                                     (string=? (substring line 0 4) "npc:")))
+                        (is-prop (and (>= (string-length line) 5)
+                                      (string=? (substring line 0 5) "prop:"))))
+                    (if (and is-npc (>= nn max-npc))
+                        (if (= i n) acc (loop (+ i 1) (+ i 1) acc nn np))
+                      (if (and is-prop (>= np max-prop))
+                          (if (= i n) acc (loop (+ i 1) (+ i 1) acc nn np))
+                        (let ((nn2 (if is-npc (+ nn 1) nn))
+                              (np2 (if is-prop (+ np 1) np)))
+                          (if (= i n)
+                              (string-append acc line "\n")
+                            (loop (+ i 1) (+ i 1)
+                                  (string-append acc line "\n") nn2 np2))))))
+                (if (= i n) acc (loop (+ i 1) (+ i 1) acc nn np))))
+          (loop (+ i 1) start acc nn np))))))
+
+(define (worldgen-llm cols rows)
+  (let* ((user (string-append
+                 "Terminal size COLS=" (number->string cols)
+                 " ROWS=" (number->string rows) ". "
+                 "Create a cheerful crowded park: about 16 animal NPCs and 20 cover props."))
+         (raw (llm-chat *wg-system* user)))
+    (if (not raw)
+        #f
+      ; Caps applied at world-add-npc!/prop load time.
+      (if (< (string-length raw) 40) #f raw))))
+
+; Write world file. offline? forces no network.
+(define (worldgen-run! cols rows out-path offline?)
+  (let ((text
+          (if offline?
+              (worldgen-offline cols rows)
+            (let ((live (worldgen-llm cols rows)))
+              (if live live (worldgen-offline cols rows))))))
+    (try
+      (begin
+        (write-file out-path text)
+        (try
+          (write-file "/tmp/aura-pets-debug.log"
+            (string-append
+              (try (read-file "/tmp/aura-pets-debug.log") (catch (e) ""))
+              "worldgen-aura: wrote " out-path "\n"))
+          (catch (e) #f))
+        #t)
+      (catch (e) #f))))

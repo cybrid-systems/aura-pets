@@ -292,18 +292,10 @@
                     (begin (set! *w-star* (parse-rgb (substring line 5 n))) #t)
                   (if (and (>= n 4) (string=? (substring line 0 4) "npc:"))
                       (let ((npc (world-parse-npc line)))
-                        (if npc
-                            (begin
-                              (set! *world-npcs* (append *world-npcs* (list npc)))
-                              #t)
-                          #f))
+                        (if npc (world-add-npc! npc) #f))
                     (if (and (>= n 5) (string=? (substring line 0 5) "prop:"))
                         (let ((pr (world-parse-prop line)))
-                          (if pr
-                              (begin
-                                (set! *world-props* (append *world-props* (list pr)))
-                                #t)
-                            #f))
+                          (if pr (world-add-prop! pr) #f))
                       #f)))))))))))
 
 ; Split file text by newlines and apply.
@@ -345,48 +337,23 @@
     (catch (e)
       (begin (world-reset!) #f))))
 
-; Resolve repo root: AURA_PETS_ROOT env, then common install paths.
-(define (world-repo-root)
-  (let ((env (try (getenv "AURA_PETS_ROOT") (catch (e) #f))))
-    (if (and env (string? env) (> (string-length env) 0)
-             (file-exists? (string-append env "/tools/worldgen.py")))
-        env
-      (if (file-exists? "/home/dev/code/aura-pets/tools/worldgen.py")
-          "/home/dev/code/aura-pets"
-        "."))))
-
-; Shell out to tools/worldgen.py (MiniMax-M3 if key present, else offline).
+; Pure Aura worldgen (lib/worldgen-engine). Offline always available.
 (define (world-generate! cols rows)
-  (let* ((root (world-repo-root))
-         (py (string-append root "/tools/worldgen.py"))
-         (out *world-path*)
-         (cmd (string-append "python3 " py
-                             " --out " out
-                             " --cols " (number->string cols)
-                             " --rows " (number->string rows)
-                             " 2>>/tmp/aura-pets-debug.log")))
-    (try
-      (begin
-        (shell cmd)
-        (world-load! out)
-        #t)
-      (catch (e)
-        (begin (world-reset!) #f)))))
+  (try
+    (begin
+      (worldgen-run! cols rows *world-path* #f)
+      (world-load! *world-path*)
+      #t)
+    (catch (e)
+      (begin (world-reset!) #f))))
 
-; Offline only (no network).
 (define (world-generate-offline! cols rows)
-  (let* ((root (world-repo-root))
-         (py (string-append root "/tools/worldgen.py"))
-         (out *world-path*)
-         (cmd (string-append "python3 " py
-                             " --out " out
-                             " --cols " (number->string cols)
-                             " --rows " (number->string rows)
-                             " --offline"
-                             " 2>>/tmp/aura-pets-debug.log")))
-    (try
-      (begin (shell cmd) (world-load! out) #t)
-      (catch (e) (begin (world-reset!) #f)))))
+  (try
+    (begin
+      (worldgen-run! cols rows *world-path* #t)
+      (world-load! *world-path*)
+      #t)
+    (catch (e) (begin (world-reset!) #f))))
 
 ; ── Drawing ──
 

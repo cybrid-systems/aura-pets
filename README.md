@@ -30,6 +30,26 @@ cd /path/to/aura-pets
 | `/heal` | Full HP (costs energy) |
 | free text (no `/`) | **LLM director** (EN + 中文), async |
 
+### Pure Aura LLM / worldgen (no Python required)
+
+NL + world generation run as **Aura** modules:
+
+| Module | Role |
+|--------|------|
+| `lib/llm-client.aura` | key load + `http-post` + `json-encode` / `json-get-string` |
+| `lib/worldgen-engine.aura` | offline dense world + MiniMax worldgen |
+| `lib/nl-engine.aura` | free-text → ops (offline heuristics or LLM) |
+| `lib/aura-jobs.aura` | background `AURA_BIN` child (async, non-blocking TUI) |
+
+`tools/*.py` remain only as legacy reference; `run.sh` no longer shells to them.
+
+```bash
+# offline world file
+AURA_PETS_NL_OFFLINE=1 AURA_PETS_ROOT=$PWD \
+  echo '(load "lib/llm-client.aura")(load "lib/worldgen-engine.aura")(worldgen-run! 80 24 "/tmp/aura-pets-world.txt" #t)' \
+  | "$AURA_BIN"
+```
+
 ### Tank battle
 
 - Color HP bars on Mochi + above each NPC  

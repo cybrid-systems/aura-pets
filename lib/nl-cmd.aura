@@ -1,14 +1,9 @@
 ; lib/nl-cmd.aura — natural language command pipeline for aura-pets.
 ;
-; Flow:
-;   player free text in prompt
-;     → tools/nl_command.py (MiniMax-M3) → /tmp/aura-pets-nl.txt
-;     → (nl-apply-file! path) mutates world + eDSL in process
-;     → (edsl-aura-commit!) / (world-aura-commit!) for AST hot path
-;
-; Ops file lines (see tools/nl_command.py):
-;   say: | theme: | sky: | npc_clear: | npc: | prop_clear: | prop:
-;   teach:event|speech | care:feed | world_regen: | aura:commit | help:
+; Flow (pure Aura progressive path):
+;   free text → Aura child (lib/nl-engine + llm-client) → /tmp/aura-pets-nl.txt
+;            → (nl-apply-file!) mutates world + eDSL in-process
+; Legacy Python tools/ kept only as optional fallback if AURA_BIN missing.
 
 (define *nl-path* "/tmp/aura-pets-nl.txt")
 (define *nl-ctx-path* "/tmp/aura-pets-nl-ctx.txt")
@@ -26,15 +21,6 @@
 (define (nl-busy?) (if *nl-busy* #t #f))
 (define (nl-busy-kind) (if *nl-busy* *nl-busy* "idle"))
 
-(define (nl-repo-root)
-  (let ((env (try (getenv "AURA_PETS_ROOT") (catch (e) #f))))
-    (if (and env (string? env) (> (string-length env) 0)
-             (file-exists? (string-append env "/tools/nl_command.py")))
-        env
-      (if (file-exists? "/home/dev/code/aura-pets/tools/nl_command.py")
-          "/home/dev/code/aura-pets"
-        "."))))
-
 ; Build a small context blob for the LLM (theme + npc names + brain rules).
 (define (nl-write-context!)
   (let ((s (string-append
@@ -45,94 +31,49 @@
       (begin (write-file *nl-ctx-path* s) #t)
       (catch (e) #f))))
 
-; Build python argv (shared by sync + async).
-(define (nl-py-cmd user-text cols rows)
-  (let* ((root (nl-repo-root))
-         (py (string-append root "/tools/nl_command.py"))
-         (safe (nl-shell-escape user-text))
-         (off (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f)))
-         (off-flag (if (and off (string? off) (> (string-length off) 0)
-                            (not (string=? off "0")))
-                       " --offline"
-                     "")))
-    (string-append
-      "python3 " py
-      " --text \"" safe "\""
-      " --out " *nl-path*
-      " --cols " (number->string cols)
-      " --rows " (number->string rows)
-      " --context-file " *nl-ctx-path*
-      off-flag
-      " 2>>/tmp/aura-pets-debug.log")))
-
-; Sync shell (tests / offline tools). Blocks until Python exits.
+; Sync generate (blocks). Prefer Aura engines; optional Python fallback.
 (define (nl-generate! user-text cols rows)
-  (let ((cmd (nl-py-cmd user-text cols rows)))
-    (nl-write-context!)
-    (try
-      (begin
-        (shell cmd)
-        (set! *nl-last-src* "py")
-        #t)
-      (catch (e)
-        (begin
-          (set! *nl-last-src* "err")
-          #f)))))
+  (nl-write-context!)
+  (try
+    (begin
+      ; in-process if engines loaded
+      (nl-engine-run! user-text cols rows *nl-path* #f)
+      (set! *nl-last-src* "aura")
+      #t)
+    (catch (e)
+      (begin (set! *nl-last-src* "err") #f))))
 
-; Async: launch Python in background; play loop keeps running.
-; Done when *nl-done-path* appears. Returns #t if job started.
+; Async: Aura child process (not Python). Play loop keeps running.
 (define (nl-start-async! user-text cols rows)
   (if *nl-busy*
       #f
     (begin
       (set! *nl-pending-text* user-text)
       (set! *nl-busy* "nl")
-      (set! *nl-last-say* "Thinking... (move freely)")
-      (set! *nl-last-src* "async")
+      (set! *nl-last-say* "Thinking... (Aura LLM)")
+      (set! *nl-last-src* "async-aura")
       (nl-write-context!)
-      (try
+      (if (jobs-start-nl! user-text cols rows
+                          *nl-path* *nl-done-path* *nl-err-path*)
+          #t
         (begin
-          ; Clear stale markers
-          (shell (string-append "rm -f " *nl-done-path* " " *nl-err-path*))
-          (shell
-            (string-append
-              "(" (nl-py-cmd user-text cols rows)
-              " && touch " *nl-done-path*
-              ") || touch " *nl-err-path*
-              " &"))
-          #t)
-        (catch (e)
-          (begin
-            (set! *nl-busy* #f)
-            (set! *nl-last-src* "err")
-            #f))))))
+          (set! *nl-busy* #f)
+          (set! *nl-last-src* "err")
+          #f)))))
 
-; Async full world regen (tools/worldgen.py).
+; Async full world regen via Aura worldgen-engine.
 (define (nl-start-worldgen-async! cols rows)
   (if *nl-busy*
       #f
-    (let* ((root (nl-repo-root))
-           (py (string-append root "/tools/worldgen.py"))
-           (out "/tmp/aura-pets-world.txt")
-           (cmd (string-append
-                  "python3 " py
-                  " --out " out
-                  " --cols " (number->string cols)
-                  " --rows " (number->string rows)
-                  " 2>>/tmp/aura-pets-debug.log")))
+    (begin
       (set! *nl-busy* "world")
-      (set! *nl-last-say* "Building world... (you can move)")
-      (set! *nl-last-src* "async-world")
-      (try
-        (begin
-          (shell (string-append "rm -f " *nl-done-path* " " *nl-err-path*))
-          (shell
-            (string-append
-              "(" cmd " && touch " *nl-done-path*
-              ") || touch " *nl-err-path* " &"))
-          #t)
-        (catch (e)
-          (begin (set! *nl-busy* #f) #f))))))
+      (set! *nl-last-say* "Building world... (Aura)")
+      (set! *nl-last-src* "async-world-aura")
+      (if (jobs-start-worldgen! cols rows
+                                "/tmp/aura-pets-world.txt"
+                                *nl-done-path* *nl-err-path*)
+          #t
+        (begin (set! *nl-busy* #f) #f)))))
 
 ; Apply finished job in-process only (no mid-session AST dump — can SIGSEGV).
 (define (nl-apply-done! kind)

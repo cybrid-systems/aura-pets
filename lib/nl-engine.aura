@@ -1,0 +1,95 @@
+; lib/nl-engine.aura — natural-language → ops file in pure Aura.
+;
+; (nl-engine-run! text cols rows out-path offline?) → #t/#f
+; Offline keyword heuristics + online MiniMax via llm-client.
+; Load: llm-client first.
+
+(define *nl-sys*
+  (string-append
+    "You are the live director of a kids terminal pet game (Aura eDSL).\n"
+    "Convert player text into ONLY plain apply-lines (no markdown):\n"
+    "say:<reply max 40>\ntheme:<name>\nsky:r,g,b\nsky2:r,g,b\n"
+    "floor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
+    "npc_clear:\nnpc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
+    "prop_clear:\nprop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
+    "teach:<feed|play|sleep|evolve|move|idle>|<speech>\n"
+    "aura:commit\nhelp:\n"
+    "Prefer 12-20 npcs when making a full world (max 24). "
+    "Kid-safe. ASCII names. x in [2,COLS-4] y in [4,ROWS-7]."))
+
+; ── Offline heuristics ──
+(define (nl-has? s sub)
+  (let ((n (string-length s))
+        (m (string-length sub)))
+    (if (> m n) #f
+      (let loop ((i 0))
+        (if (> (+ i m) n) #f
+          (if (string=? (substring s i (+ i m)) sub) #t
+            (loop (+ i 1))))))))
+
+(define (nl-offline-ops text cols rows)
+  (let* ((t text)
+         (floor-y (if (< (- rows 6) 8) 8 (- rows 6)))
+         (snow (or (nl-has? t "snow") (nl-has? t "冬") (nl-has? t "雪")
+                   (nl-has? t "ice") (nl-has? t "cold")))
+         (beach (or (nl-has? t "beach") (nl-has? t "海") (nl-has? t "sand")))
+         (night (or (nl-has? t "night") (nl-has? t "夜") (nl-has? t "star")))
+         (want-world (or snow beach night
+                         (nl-has? t "world") (nl-has? t "park")
+                         (nl-has? t "scene") (nl-has? t "npc")
+                         (nl-has? t "背景") (nl-has? t "公园")
+                         (nl-has? t "make") (nl-has? t "create")
+                         (> (string-length t) 6))))
+    (if (or (nl-has? t "teach") (nl-has? t "教"))
+        (string-append
+          "say:Learned feed!\n"
+          "teach:feed|Yum!\n"
+          "aura:commit\n")
+      (if want-world
+          ; Dense offline world (many NPCs) — themed prefix when snow/beach/night
+          (string-append
+            (cond
+              (snow "say:Snow day!\ntheme:Snowy Meadow\n")
+              (beach "say:Beach day!\ntheme:Sunny Beach\n")
+              (night "say:Night park!\ntheme:Starry Park\n")
+              (else "say:New park ready!\n"))
+            (worldgen-offline cols rows))
+        (string-append
+          "say:Try /help or describe a park\n"
+          "help:\n")))))
+
+(define (nl-engine-run! text cols rows out-path offline?)
+  (let ((force-off
+          (or offline?
+              (let ((e (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f))))
+                (and e (string? e) (> (string-length e) 0)
+                     (not (string=? e "0")))))))
+    (let ((ops
+            (if force-off
+                (nl-offline-ops text cols rows)
+              (let* ((ctx (try (if (file-exists? "/tmp/aura-pets-nl-ctx.txt")
+                                   (read-file "/tmp/aura-pets-nl-ctx.txt")
+                                 "")
+                               (catch (e) "")))
+                     (user (string-append
+                             "COLS=" (number->string cols)
+                             " ROWS=" (number->string rows) "\n"
+                             "Context:\n" ctx "\n"
+                             "Player said:\n" text))
+                     (raw (llm-chat *nl-sys* user)))
+                (if raw
+                    ; keep raw lines; world/apply will cap
+                    (string-append raw "\n")
+                  (nl-offline-ops text cols rows))))))
+      (try
+        (begin
+          (write-file out-path ops)
+          (try
+            (write-file "/tmp/aura-pets-debug.log"
+              (string-append
+                (try (read-file "/tmp/aura-pets-debug.log") (catch (e) ""))
+                "nl-engine-aura: wrote " out-path
+                (if force-off " offline\n" " live\n")))
+            (catch (e) #f))
+          #t)
+        (catch (e) #f)))))
