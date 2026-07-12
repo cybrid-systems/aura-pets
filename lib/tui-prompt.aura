@@ -198,37 +198,31 @@
       (string=? ch "Delete")
       (prompt-u8-3? ch 226 140 166)))
 
-; ← U+2190 E2 86 90 ; → U+2192 E2 86 92 ; ↑ U+2191 E2 86 91 ; ↓ U+2193 E2 86 93
+; Arrow nav only (no wasd letters — they steal typing for teach/brain).
+; Engine maps CSI / SS3 (ESC O A/B/C/D on macOS) → ←→↑↓.
 (define (prompt-is-left? ch)
   (or (= (prompt-ch-code ch) 2)
       (string=? ch "←")
       (prompt-u8-3? ch 226 134 144)
-      (string=? ch "Left")
-      (string=? ch "a") (string=? ch "A")
-      ; broken CSI fallback: lone final byte
-      (string=? ch "D")))
+      (string=? ch "Left")))
 
 (define (prompt-is-right? ch)
   (or (= (prompt-ch-code ch) 6)
       (string=? ch "→")
       (prompt-u8-3? ch 226 134 146)
-      (string=? ch "Right")
-      (string=? ch "d") (string=? ch "D")
-      (string=? ch "C")))
+      (string=? ch "Right")))
 
 (define (prompt-is-up? ch)
   (or (string=? ch "↑")
       (prompt-u8-3? ch 226 134 145)
-      (string=? ch "Up")
-      (string=? ch "w") (string=? ch "W")
-      (string=? ch "A")))
+      (string=? ch "Up")))
 
 (define (prompt-is-down? ch)
   (or (string=? ch "↓")
       (prompt-u8-3? ch 226 134 147)
-      (string=? ch "Down")
-      (string=? ch "s") (string=? ch "S")
-      (string=? ch "B"))); Home U+21F1 E2 87 B1 ; End U+21F2 E2 87 B2
+      (string=? ch "Down")))
+
+; Home U+21F1 E2 87 B1 ; End U+21F2 E2 87 B2
 (define (prompt-is-home? ch)
   (or (= (prompt-ch-code ch) 1)
       (string=? ch "Home")
