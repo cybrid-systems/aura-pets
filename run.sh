@@ -1,9 +1,8 @@
 #!/bin/bash
 # run.sh — aura-pets entry point.
 #
-# Sets AURA_STDLIB_DIR, loads pet-lifecycle + chosen example, then calls
-# <entry-fn> explicitly. Avoids an Aura REPL quirk where top-level
-# (define) + (call-of-fn-with-colon-in-name) silently no-ops.
+# Default: 8 frames of cat-demo.aura with full 24-bit ANSI colors visible
+# in your terminal. See --help for more modes.
 
 set -e
 
@@ -19,24 +18,40 @@ if [ -x "$AURA_BIN" ]; then
 elif [ -x "$AURA_GROK_BIN" ]; then
   AURA="$AURA_GROK_BIN"
 else
-  echo "FATAL: no aura binary found" >&2
+  echo "FATAL: no aura binary. Build one:" >&2
+  echo "  cd $AURA_HOME && cmake -B build && cmake --build build --target aura -j" >&2
   exit 1
 fi
 
-EXAMPLE="${1:-examples/smoke.aura}"
-ENTRY_FN="${2:-smoke-entry}"
-shift 2 || shift || true
+EXAMPLE="examples/cat-demo.aura"
+FRAMES=8
+ENTRY_FN="cat-demo-anim"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help|-h)
+      cat <<USAGE
+Usage:
+  ./run.sh                  8 frames of cat demo (default)
+  ./run.sh --frames N       N frames then exit (e.g. --frames 4)
+  ./run.sh --loop           animate forever (Ctrl-C to stop)
+  ./run.sh smoke            text-only smoke (no colors) for CI logs
+  ./run.sh --example FILE   use a different example file
+USAGE
+      exit 0
+      ;;
+    --frames) FRAMES="$2"; shift 2 || shift ;;
+    --loop) FRAMES=99999; shift ;;
+    smoke) EXAMPLE="examples/smoke.aura"; ENTRY_FN="smoke-entry"; shift ;;
+    --example) EXAMPLE="$2"; shift 2 || shift ;;
+    *) echo "Unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
 
 if [ ! -f "$EXAMPLE" ]; then
   echo "FATAL: example not found: $EXAMPLE" >&2
   exit 1
 fi
 
-EXPR="(begin (load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$EXAMPLE\") ($ENTRY_FN))"
-if [ $# -gt 0 ]; then
-  EXPR="$EXPR $*"
-fi
-
-RAW_OUTPUT=$(echo "$EXPR" | "$AURA" 2>&1 || true)
-
-python3 /home/dev/code/aura-pets/run_parse.py "$RAW_OUTPUT"
+EXPR="(begin (load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$EXAMPLE\") ($ENTRY_FN $FRAMES))"
+echo "$EXPR" | "$AURA" 2>&1

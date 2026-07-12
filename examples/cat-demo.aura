@@ -1,0 +1,83 @@
+; examples/cat-demo.aura — Stage 0.7 colored & animated cat demo
+
+(load "/home/dev/code/aura-pets/lib/pet-lifecycle.aura")
+
+; ── ANSI helpers ──
+(define (rgb r g b)
+  (string-append "\x1b[38;2;" (number->string r) ";"
+                 (number->string g) ";" (number->string b) "m"))
+(define (bg-rgb r g b)
+  (string-append "\x1b[48;2;" (number->string r) ";"
+                 (number->string g) ";" (number->string b) "m"))
+(define RESET "\x1b[0m")
+(define CLEAR "\x1b[2J\x1b[H")
+(define HIDE-CURSOR "\x1b[?25l")
+(define SHOW-CURSOR "\x1b[?25h")
+
+; Sprites
+(define sprite-0a (list "  /\\_/\\  " " ( o.o ) " "  > ^ <  "))
+(define sprite-0b (list "  /\\_/\\  " " ( o.O ) " "  > ^ <  "))
+(define sprite-1a (list "  /\\_/\\  " " ( -.- ) " "  > ^ <  "))
+(define sprite-1b (list "  /\\_/\\  " " ( x.x ) " "  > ^ <  "))
+(define sprite-2a (list "  /\\_/\\  " " ( @.@ ) " "  > ~ <  "))
+(define sprite-2b (list "  /\\_/\\  " " ( *.* ) " "  > ~ <  "))
+
+(define (even? n) (= 0 (modulo n 2)))
+
+(define (pick-sprite version frame-n)
+  (cond
+    ((= version 0) (if (even? frame-n) sprite-0a sprite-0b))
+    ((= version 1) (if (even? frame-n) sprite-1a sprite-1b))
+    (else (if (even? frame-n) sprite-2a sprite-2b))))
+
+(define (frame-ansi pet frame-n)
+  (let* ((version (pet-version pet))
+         (species (pet-species pet))
+         (sprite-id (pet-sprite-id pet))
+         (evolves (- (length (pet-history pet)) 1))
+         (title-c (rgb 0 220 255))
+         (hud-c (rgb 0 200 80))
+         (cat-c (rgb 255 100 200))
+         (hud-bg (bg-rgb 20 0 30))
+         (sprite (pick-sprite version frame-n))
+         (line0 (car sprite))
+         (line1 (car (cdr sprite)))
+         (line2 (car (cdr (cdr sprite)))))
+    (string-append
+      CLEAR HIDE-CURSOR hud-bg
+      title-c "  Pet: " species " v" (number->string version) "   "
+      hud-c "sprite=" sprite-id "   evolves=" (number->string evolves) "   "
+      RESET
+      "\n"
+      hud-c "  Press [e] to evolve | [s] to save | [q] to quit   " RESET
+      "\n\n"
+      cat-c line0 RESET "\n"
+      cat-c line1 RESET "\n"
+      cat-c line2 RESET "\n"
+      hud-bg "                                          " RESET "\n")))
+
+; ── Animation without busy-wait — emit all frames in a row for CI ──
+(define (cat-demo-anim n)
+  (define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
+  (define evolved mochi)
+  (let loop ((i 0) (current mochi))
+    (cond
+      ((>= i n)
+       (display SHOW-CURSOR) (display RESET)
+       "DONE")
+      (else
+        (define next
+          (if (and (= i 4) (= (pet-version current) 0))
+              (pet-evolve current "/tmp/brain-v2" "feed")
+              current))
+        (display "\n=== Frame ")
+        (display (number->string i))
+        (display " ===\n")
+        (display (frame-ansi next i))
+        (loop (+ i 1) next)))))
+
+(define (cat-demo-interactive)
+  (cat-demo-anim 99999))
+
+; Default entry: just 6 frames for headless smoke
+(cat-demo-anim 6)
