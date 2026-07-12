@@ -206,7 +206,8 @@
 
 (define (cat-demo-anim n)
   (layout-fit!)
-  (tui:init "aura-pets" W H)
+  ; #t = full cell buffer (needed for box-drawing / UTF-8 frame-ansi)
+  (tui:init "aura-pets" W H #t)
   (tui:hide-cursor)
   (prompt-init! PROMPT-Y)
   (game-reset!)
