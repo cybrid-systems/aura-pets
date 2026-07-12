@@ -14,7 +14,7 @@
     "prop_clear:\nprop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
     "teach:<feed|play|sleep|evolve|move|idle>|<speech>\n"
     "aura:commit\nhelp:\n"
-    "Prefer 12-20 npcs when making a full world (max 24). "
+    "Prefer 4-6 npcs and 6-10 props (max 8 npcs / 12 props). "
     "Kid-safe. ASCII names. x in [2,COLS-4] y in [4,ROWS-7]."))
 
 ; ── Offline heuristics ──

@@ -26,25 +26,10 @@
              (list "Frog" "friend" "Ribbit~")
              (list "Fox" "friend" "Sly hi!")
              (list "Owl" "friend" "Hoo there!")
-             (list "Bear" "friend" "Hug?")
-             (list "Duck" "friend" "Quack!")
-             (list "Cat" "friend" "Meow~")
-             (list "Pup" "friend" "Woof!")
-             (list "Deer" "friend" "Soft step.")
-             (list "Pip" "decor" "Spark!")
-             (list "Dot" "decor" "Boop!")
-             (list "Bean" "decor" "Tiny!")
-             (list "Moth" "decor" "Flutter")
-             (list "Bug" "decor" "Crawl")
-             (list "Star" "decor" "Twinkle")
-             (list "Mint" "decor" "Fresh!")
-             (list "Coco" "friend" "Hello!")
-             (list "Lark" "friend" "Sing!")
-             (list "Moss" "decor" "Green!")))
+             (list "Pip" "decor" "Spark!")))
          (props
-           (list "tree" "tree" "tree" "flower" "flower" "flower" "flower"
-                 "crate" "crate" "crate" "wall" "wall" "wall"
-                 "bush" "bush" "bush" "rock" "rock" "crate" "bush"))
+           (list "tree" "tree" "flower" "flower" "crate" "wall"
+                 "bush" "rock" "crate" "bush"))
          (x-span (if (< (- cols 8) 8) 8 (- cols 8)))
          (y-span (if (< (- floor-y 6) 4) 4 (- floor-y 6)))
          (s0 (string-append
@@ -88,8 +73,8 @@
 
 (define (worldgen-filter-text text cols rows)
   (let ((n (string-length text))
-        (max-npc 24)
-        (max-prop 32))
+        (max-npc 8)
+        (max-prop 12))
     (let loop ((i 0) (start 0) (acc (substring "x" 0 0))
                (nn 0) (np 0))
       (if (> i n)

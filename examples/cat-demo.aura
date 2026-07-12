@@ -36,21 +36,24 @@
   (if (< n lo) lo (if (> n hi) hi n)))
 
 ; Read TTY size (rows . cols) and rebuild layout to fill the window.
-; Min 60x20 so UI still fits; max 200x60 to cap half-block work.
+; Prefer full terminal; only clamp absurd sizes (min 40x16, max 220x80).
 (define (layout-fit!)
   (let* ((sz (tui:terminal-size))
          (rows (car sz))
          (cols (cdr sz))
-         (w (clamp-n cols 60 200))
-         (h (clamp-n rows 20 60)))
+         ; If ioctl failed, terminal-size may return 0 — keep previous / default.
+         (raw-w (if (> cols 0) cols W))
+         (raw-h (if (> rows 0) rows H))
+         (w (clamp-n raw-w 40 220))
+         (h (clamp-n raw-h 16 80)))
     (set! W w)
     (set! H h)
     (set! SCENE-Y0 3)
     ; leave 1 speech + 3-row bordered prompt box at bottom
     (set! SCENE-Y1 (clamp-n (- h 5) 8 (- h 4)))
-    (set! PROMPT-Y (- h 3))
-    ; full-width Grok-style box (outer width)
-    (prompt-set-width! (clamp-n w 40 200))
+    (set! PROMPT-Y (clamp-n (- h 3) 5 (- h 1)))
+    ; full-width Grok-style box
+    (try (prompt-set-width! (clamp-n w 40 220)) (catch (e) #f))
     #t))
 (define BAR0 "..........")
 (define BAR1 "=.........")
@@ -471,16 +474,19 @@
   #t)
 
 (define (cat-demo-interactive)
-  ; Fit canvas to *current* terminal (rows . cols) before init.
+  ; Size after raw mode so ioctl sees the real TTY.
+  (tui:raw-mode-on)
   (layout-fit!)
+  (tui:init "aura-pets" W H #t)
+  ; Re-fit once buffer exists (some hosts report size only after init).
+  (layout-fit!)
+  ; If size changed after init, re-init canvas to match full terminal.
+  (tui:shutdown)
   (tui:init "aura-pets" W H #t)
   (tui:hide-cursor)
   (tui:raw-mode-on)
   (prompt-init! PROMPT-Y)
-  (game-reset!)
-  (prompt-set-log!
-    (string-append "size " (number->string W) "x" (number->string H)
-                   " | /grow /eat /fight /back /help"))
+  (prompt-set-width! W)
   (game-reset!)
   (morph-reset!)
   (set! *p-pet* (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
@@ -496,21 +502,19 @@
   (set! *p-quit* "unknown")
   (plog-start! (plog-path))
   (plog "info" (string-append "term=" (number->string W) "x" (number->string H)
+                              " scene=" (number->string SCENE-Y0)
+                              ".." (number->string SCENE-Y1)
                               " " (pet-snap *p-pet*)))
-  ; Instant offline/default world so play never blocks on startup LLM.
+  ; Small default world only — no auto async worldgen (was crashing large TTY).
   (world-set-path! "/tmp/aura-pets-world.txt")
-  (plog "world" "load-or-offline-then-async")
-  (if (file-exists? "/tmp/aura-pets-world.txt")
-      (world-load! "/tmp/aura-pets-world.txt")
-    (world-reset!))
-  ; Kick MiniMax worldgen in background (poll applies when ready).
-  (nl-start-worldgen-async! W H)
+  (world-reset!)
   (plog "world" (string-append "theme=" (world-theme)
                                " npcs=" (number->string (world-npc-count))
-                               " async=1"))
+                               " async=0"))
   (game-set-speech!
     (string-append "Welcome! " (world-theme)
-                   " — type words anytime (async)"))
+                   " " (number->string W) "x" (number->string H)
+                   " | /world regen | Space fire"))
   (prompt-set-log! (game-speech))
   ; Host (while pred body) runs in C++ — no Scheme stack growth per frame.
   ; Named-let (iter) caused SIGSEGV in eval_flat after ~800 frames.
