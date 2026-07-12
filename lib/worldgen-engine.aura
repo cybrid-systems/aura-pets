@@ -14,7 +14,7 @@
     "theme:<name>\nsky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
     "npc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
     "prop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
-    "Rules: 12-20 npc (max 24), 16-28 prop (max 32). ASCII names. "
+    "Rules: 4-6 npc (max 8), 6-10 prop (max 12). ASCII names. "
     "x in [2,COLS-4], y in [4,ROWS-7]. Kid-safe."))
 
 (define (worldgen-offline cols rows)
