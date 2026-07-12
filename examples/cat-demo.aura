@@ -524,6 +524,8 @@
   (plog-quit *p-quit* *p-frame* (pet-snap *p-pet*))
   (prompt-set-log!
     (string-append "bye (" *p-quit* ") log=" (plog-path)))
+  ; Restore terminal before last paint so block cursor / tty cursor come back.
+  (tui:show-cursor)
   (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
   (tui:raw-mode-off)
   (tui:show-cursor)
