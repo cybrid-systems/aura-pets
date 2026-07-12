@@ -39,6 +39,14 @@
 (define (combat-max) *combat-max*)
 (define (combat-atk) *combat-atk*)
 
+; Cross-file mutators (Aura set! of foreign defines can fail).
+(define (combat-set-hp! n)
+  (set! *combat-hp* (if (< n 0) 0 (if (> n *combat-max*) *combat-max* n)))
+  *combat-hp*)
+
+(define (combat-add-hp! d)
+  (combat-set-hp! (+ *combat-hp* d)))
+
 (define (combat-status pet)
   (string-append
     (pet-form-name (pet-version pet))

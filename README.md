@@ -23,22 +23,27 @@ cd /path/to/aura-pets
 | `/grow` | Next form: Kitten→Pink→Tiger→Shadow→Dragon |
 | `/back` | Previous form |
 | `/form` `/status` | Morph name + HP/ATK |
-| `/fight` | Hit nearest NPC (they hit back) |
+| **Space** / `/fire` | Shoot in facing direction (tank mode) |
+| **2× same arrow** | Dash 3 cells that way |
+| `/weapon` [name] | Cycle/set: `shot` `double` `beam` `bomb` `fire` |
+| `/fight` | Melee if close |
 | `/heal` | Full HP (costs energy) |
-| `/talk` `/world` `/help` | Social / regen / help |
 | free text (no `/`) | **LLM director** (EN + 中文), async |
 
-### Forms & combat
+### Tank battle
 
-| Form | HP | ATK |
-|------|----|-----|
-| Kitten | 20 | 3 |
-| Pink Cat | 28 | 5 |
-| Tiger | 36 | 7 |
-| Shadow | 44 | 9 |
-| Dragon Cat | 55 | 12 |
+- Color HP bars on Mochi + above each NPC  
+- Floating `-N` damage, flash, death `KO` then NPC disappears  
+- NPCs shoot back automatically  
+- Higher forms unlock stronger guns (`/grow` then `/weapon`)
 
-Walk next to an NPC, type `/fight`. Fainted NPCs leave the scene. `/heal` after `/sleep` if energy is low.
+| Form | HP | ATK | Unlocks |
+|------|----|-----|---------|
+| Kitten | 20 | 3 | shot |
+| Pink Cat | 28 | 5 | double |
+| Tiger | 36 | 7 | beam |
+| Shadow | 44 | 9 | bomb |
+| Dragon Cat | 55 | 12 | fire |
 
 ### Natural language director (eDSL + AST hot update)
 

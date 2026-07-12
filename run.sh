@@ -30,7 +30,7 @@ FRAMES=10
 MODE="auto"
 
 # pet-log before scene so play-entry can plog-*
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
 
@@ -49,13 +49,12 @@ Aura Pets
 Play: arrows move | 1 2 3 care | q bye
   Slash commands (type /… then Enter):
     /eat /play /sleep     care
-    /grow                 next form (Kitten→…→Dragon Cat)
-    /back                 previous form
-    /form /status         show morph + HP/ATK
-    /fight                scuffle nearest NPC
-    /heal                 full HP (costs energy)
-    /talk /world /brain /help /quit
-  Also: free Chinese/English for LLM world (async)
+    /grow /back           morph forms (Kitten→…→Dragon)
+    /fire  (or Space)     shoot in facing dir (tank mode)
+    /weapon [name]        cycle/set: shot double beam bomb fire
+    /fight                melee if close
+    /heal /status /talk /world /help
+  Double-tap same arrow = dash. NPCs shoot back. HP bars + dmg FX.
 World/NL: MiniMax-M3 (key: ~/code/keys/minimax)
 
 Debug: every play session writes $LOG_FILE

@@ -70,7 +70,7 @@
   (set! *prompt-submit* (prompt-empty))
   (set! *prompt-hot* (prompt-empty))
   (set! *prompt-cursor* 0)
-  (set! *prompt-log* "/grow /eat /fight /back /help · 123 care · CN ok")
+  (set! *prompt-log* "Space fire · 2x arrow dash · /weapon /grow /help")
   #t)
 
 (define (prompt-set-log! msg)
@@ -373,9 +373,16 @@
 (define (prompt-is-kill-word? ch)
   (= (prompt-ch-code ch) 23))     ; C-w
 
-; Empty-line hotkeys: digits only so e/g/t/letters can be typed (CN/English).
+; Empty-line hotkeys: care digits + Space fire (tank mode).
 (define (prompt-is-hot? ch)
-  (or (string=? ch "1") (string=? ch "2") (string=? ch "3")))
+  (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
+      (string=? ch " ") (string=? ch "Space")))
+
+; Map hot key payload to command token.
+(define (prompt-hot-cmd ch)
+  (cond
+    ((or (string=? ch " ") (string=? ch "Space")) "fire")
+    (else ch)))
 
 ; Handle one tui:read-event. → "quit"|"submit"|"edit"|"hot"|#f
 (define (prompt-handle e)
@@ -428,7 +435,7 @@
             ((and empty? (or (string=? ch "q") (string=? ch "Q")))
              "quit")
             ((and empty? (prompt-is-hot? ch))
-             (set! *prompt-hot* ch)
+             (set! *prompt-hot* (prompt-hot-cmd ch))
              "hot")
             ((prompt-printable? ch)
              (prompt-insert! ch)

@@ -55,8 +55,8 @@
 
 (define (cmd-help-text)
   (string-append
-    "/eat /play /sleep /grow /back /form "
-    "/fight /heal /status /talk /world /brain /help /quit"))
+    "/eat /grow /back /fire /weapon /fight /heal "
+    "/status /talk /world /help | Space=fire double-tap=dash"))
 
 ; Core slash dispatcher. pet is the live pet record.
 (define (cmd-run pet raw)
@@ -145,11 +145,36 @@
 
       ; ── combat ──
       ((or (string=? head "fight") (string=? head "atk") (string=? head "attack")
-           (string=? head "hit") (string=? head "battle") (string=? head "punch"))
-       (let ((r (combat-fight! pet *cmd-px* *cmd-py*)))
-         (set! *speech* (car r))
-         (set! *last-act* "fight")
-         (cons #t (cdr r))))
+           (string=? head "hit") (string=? head "battle") (string=? head "punch")
+           (string=? head "fire") (string=? head "shoot") (string=? head "shot"))
+       ; Prefer ranged shot; melee if no facing fire
+       (if (battle-pet-fire! pet *cmd-px* *cmd-py*)
+           (begin
+             (set! *speech*
+               (string-append "Pew! [" (battle-weapon) "]"))
+             (set! *last-act* "fire")
+             (cons #t pet))
+         (let ((r (combat-fight! pet *cmd-px* *cmd-py*)))
+           (set! *speech* (car r))
+           (set! *last-act* "fight")
+           (cons #t (cdr r)))))
+
+      ((or (string=? head "weapon") (string=? head "wpn") (string=? head "gun"))
+       (if (= (string-length args) 0)
+           (begin
+             (set! *speech*
+               (string-append "Weapon: " (battle-cycle-weapon! (pet-version pet))
+                              " (shot/double/beam/bomb/fire)"))
+             (set! *last-act* "weapon")
+             (cons #t pet))
+         (if (battle-set-weapon! (cmd-downcase-ascii args) (pet-version pet))
+             (begin
+               (set! *speech* (string-append "Weapon -> " (battle-weapon)))
+               (set! *last-act* "weapon")
+               (cons #t pet))
+           (begin
+             (set! *speech* "Need higher form for that weapon!")
+             (cons #t pet)))))
 
       ((or (string=? head "heal") (string=? head "potion") (string=? head "recover"))
        (let ((r (combat-heal-pair! pet)))
@@ -212,4 +237,6 @@
         (string=? head "status") (string=? head "stats") (string=? head "form")
         (string=? head "help") (string=? head "talk") (string=? head "world")
         (string=? head "brain") (string=? head "quit") (string=? head "say")
-        (string=? head "teach") (string=? head "atk") (string=? head "attack"))))
+        (string=? head "teach") (string=? head "atk") (string=? head "attack")
+        (string=? head "fire") (string=? head "shoot") (string=? head "weapon")
+        (string=? head "wpn") (string=? head "gun"))))

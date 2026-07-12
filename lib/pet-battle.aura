@@ -1,0 +1,466 @@
+; lib/pet-battle.aura — tank-battle style combat for aura-pets.
+;
+; - Pretty HP bars (pet HUD + over NPC heads)
+; - Projectiles both ways (pet weapons + NPC shots)
+; - Floating "-N" damage + death dissolve FX
+; - Double-tap dash handled in cat-demo (uses battle-dash-mul)
+;
+; Depends: pet-lifecycle, pet-combat, world, pet-anim (loaded first).
+
+; ── Projectiles: (x y dx dy team dmg life wpn) ──
+; team 0 = pet, 1 = npc
+(define *bullets* '())
+; Floating FX: (x y text life)
+(define *fx* '())
+; NPC hit flash frames: (name . frames)
+(define *npc-flash* '())
+; NPC death dissolve: (name . frames) then remove
+(define *npc-dying* '())
+; Pet facing: "left"|"right"|"up"|"down"
+(define *face* "right")
+; Active weapon id
+(define *weapon* "shot")
+; Scene bounds for bullets (set each frame)
+(define *b-x0* 0)
+(define *b-y0* 3)
+(define *b-x1* 80)
+(define *b-y1* 20)
+; NPC fire cooldown counter
+(define *npc-fire-cd* 0)
+; Pet fire cooldown
+(define *pet-fire-cd* 0)
+
+(define (battle-reset!)
+  (set! *bullets* '())
+  (set! *fx* '())
+  (set! *npc-flash* '())
+  (set! *npc-dying* '())
+  (set! *face* "right")
+  (set! *weapon* "shot")
+  (set! *npc-fire-cd* 0)
+  (set! *pet-fire-cd* 0)
+  #t)
+
+(define (battle-set-bounds! x0 y0 x1 y1)
+  (set! *b-x0* x0)
+  (set! *b-y0* y0)
+  (set! *b-x1* x1)
+  (set! *b-y1* y1)
+  #t)
+
+(define (battle-face) *face*)
+(define (battle-set-face! d) (set! *face* d) #t)
+(define (battle-weapon) *weapon*)
+
+; Weapons unlocked by form version.
+(define (battle-weapon-ok? wpn version)
+  (cond
+    ((string=? wpn "shot") #t)
+    ((string=? wpn "double") (>= version 1))
+    ((string=? wpn "beam") (>= version 2))
+    ((string=? wpn "bomb") (>= version 3))
+    ((string=? wpn "fire") (>= version 4))
+    (else #f)))
+
+(define (battle-set-weapon! wpn version)
+  (if (battle-weapon-ok? wpn version)
+      (begin (set! *weapon* wpn) #t)
+    #f))
+
+(define (battle-cycle-weapon! version)
+  (let ((order (list "shot" "double" "beam" "bomb" "fire")))
+    (let loop ((xs order) (found #f))
+      (cond
+        ((null? xs)
+         ; wrap to first allowed
+         (let find ((ys order))
+           (if (null? ys) "shot"
+             (if (battle-weapon-ok? (car ys) version)
+                 (begin (set! *weapon* (car ys)) *weapon*)
+               (find (cdr ys))))))
+        (found
+         (if (battle-weapon-ok? (car xs) version)
+             (begin (set! *weapon* (car xs)) *weapon*)
+           (loop (cdr xs) #t)))
+        ((string=? (car xs) *weapon*)
+         (loop (cdr xs) #t))
+        (else (loop (cdr xs) #f))))))
+
+; Damage / speed / life by weapon
+(define (battle-wpn-dmg wpn base)
+  (cond
+    ((string=? wpn "shot") base)
+    ((string=? wpn "double") base)
+    ((string=? wpn "beam") (+ base 2))
+    ((string=? wpn "bomb") (+ base 4))
+    ((string=? wpn "fire") (+ base 5))
+    (else base)))
+
+(define (battle-wpn-life wpn)
+  (cond
+    ((string=? wpn "beam") 18)
+    ((string=? wpn "bomb") 10)
+    ((string=? wpn "fire") 14)
+    (else 22)))
+
+(define (battle-wpn-spd wpn)
+  (cond
+    ((string=? wpn "beam") 2)
+    ((string=? wpn "bomb") 1)
+    ((string=? wpn "fire") 2)
+    (else 1)))
+
+; ── Pretty HP bar: [████░░░░] green/yellow/red ──
+(define (hp-bar-fill n filled)
+  ; n cells, filled count — use '=' and '.'
+  (let loop ((i 0) (acc (substring "x" 0 0)))
+    (if (>= i n)
+        acc
+      (loop (+ i 1)
+            (string-append acc (if (< i filled) "=" "."))))))
+
+(define (hp-bar-color cur maxn)
+  (if (<= maxn 0)
+      (rgb 80 80 80)
+    (let ((pct (quotient (* cur 100) maxn)))
+      (cond
+        ((>= pct 60) (rgb 80 220 100))
+        ((>= pct 30) (rgb 255 200 60))
+        (else (rgb 255 70 70))))))
+
+; Draw labeled bar at (col,row) width cells of fill.
+(define (draw-hp-bar! col row cur maxn width label)
+  (let* ((w (if (< width 4) 4 width))
+         (filled (if (<= maxn 0) 0
+                   (quotient (* cur w) maxn)))
+         (fg (hp-bar-color cur maxn))
+         (dim (rgb 50 50 60))
+         (lab (if label label "")))
+    (if (> (string-length lab) 0)
+        (draw-text col row lab (rgb 180 200 220) 0)
+      #t)
+    (let ((bx (if (> (string-length lab) 0)
+                  (+ col (string-length lab) 1)
+                col)))
+      (draw-text bx row "[" (rgb 120 120 140) 0)
+      (let loop ((i 0))
+        (if (>= i w) #t
+          (begin
+            (draw-text (+ bx 1 i) row
+                       (if (< i filled) "=" ".")
+                       (if (< i filled) fg dim) 0)
+            (loop (+ i 1)))))
+      (draw-text (+ bx 1 w) row "]" (rgb 120 120 140) 0)
+      #t)))
+
+; Compact mini bar for NPCs (no label): width 6
+(define (draw-npc-hp-bar! col row cur maxn)
+  (draw-hp-bar! col row cur maxn 6 "")
+  #t)
+
+; ── FX ──
+(define (fx-spawn! x y text life)
+  (set! *fx* (cons (list x y text life) *fx*))
+  #t)
+
+(define (fx-tick!)
+  (set! *fx*
+    (let loop ((xs *fx*) (acc '()))
+      (if (null? xs)
+          (reverse acc)
+        (let* ((f (car xs))
+               (x (car f))
+               (y (car (cdr f)))
+               (tx (car (cdr (cdr f))))
+               (life (car (cdr (cdr (cdr f))))))
+          (if (<= life 1)
+              (loop (cdr xs) acc)
+            (loop (cdr xs)
+                  (cons (list x (- y 0) tx (- life 1)) acc)))))))
+  #t)
+
+(define (fx-draw!)
+  (let loop ((xs *fx*))
+    (if (null? xs) #t
+      (let* ((f (car xs))
+             (x (car f))
+             (y (car (cdr f)))
+             (tx (car (cdr (cdr f))))
+             (life (car (cdr (cdr (cdr f)))))
+             (fg (if (> life 8) (rgb 255 80 80) (rgb 255 180 100))))
+        (draw-text x y tx fg 0)
+        (loop (cdr xs))))))
+
+; ── Flash / dying maps ──
+(define (npc-flash-set! name n)
+  (set! *npc-flash*
+    (let loop ((xs *npc-flash*) (acc '()) (done #f))
+      (cond
+        ((null? xs)
+         (if done (reverse acc) (append (reverse acc) (list (cons name n)))))
+        ((string=? (car (car xs)) name)
+         (append (reverse acc) (cons (cons name n) (cdr xs))))
+        (else (loop (cdr xs) (cons (car xs) acc) done)))))
+  #t)
+
+(define (npc-flash-get name)
+  (let loop ((xs *npc-flash*))
+    (if (null? xs) 0
+      (if (string=? (car (car xs)) name) (cdr (car xs))
+        (loop (cdr xs))))))
+
+(define (npc-dying? name)
+  (let loop ((xs *npc-dying*))
+    (if (null? xs) #f
+      (if (string=? (car (car xs)) name) #t
+        (loop (cdr xs))))))
+
+(define (npc-dying-set! name n)
+  (set! *npc-dying* (cons (cons name n) *npc-dying*))
+  #t)
+
+(define (npc-flash-tick!)
+  (set! *npc-flash*
+    (let loop ((xs *npc-flash*) (acc '()))
+      (if (null? xs) (reverse acc)
+        (let ((n (cdr (car xs)))
+              (nm (car (car xs))))
+          (if (<= n 1)
+              (loop (cdr xs) acc)
+            (loop (cdr xs) (cons (cons nm (- n 1)) acc)))))))
+  #t)
+
+; Process dying NPCs; remove when timer hits 0.
+(define (npc-dying-tick!)
+  (set! *npc-dying*
+    (let loop ((xs *npc-dying*) (acc '()))
+      (if (null? xs) (reverse acc)
+        (let ((nm (car (car xs)))
+              (n (cdr (car xs))))
+          (if (<= n 1)
+              (begin
+                (world-remove-npc-name! nm)
+                (loop (cdr xs) acc))
+            (loop (cdr xs) (cons (cons nm (- n 1)) acc)))))))
+  #t)
+
+; ── Bullets ──
+(define (bullet-spawn! x y dx dy team dmg life wpn)
+  (set! *bullets*
+    (cons (list x y dx dy team dmg life wpn) *bullets*))
+  #t)
+
+(define (face-delta dir)
+  (cond
+    ((string=? dir "left") (cons -1 0))
+    ((string=? dir "right") (cons 1 0))
+    ((string=? dir "up") (cons 0 -1))
+    (else (cons 0 1))))
+
+; Fire pet weapon from cat position (top-left of sprite).
+(define (battle-pet-fire! pet cx cy)
+  (cond
+    ((> *pet-fire-cd* 0) #f)
+    ((<= (combat-hp) 0) #f)
+    (else
+     (let* ((wpn *weapon*)
+            (d (face-delta *face*))
+            (spd (battle-wpn-spd wpn))
+            (dx (* (car d) spd))
+            (dy (* (cdr d) spd))
+            (dmg (battle-wpn-dmg wpn (combat-atk)))
+            (life (battle-wpn-life wpn))
+            (sx (+ cx 5))
+            (sy (+ cy 2)))
+       (set! *pet-fire-cd* (if (string=? wpn "beam") 4 8))
+       (anim-start! "fight" 8)
+       (bullet-spawn! sx sy dx dy 0 dmg life wpn)
+       (if (string=? wpn "double")
+           (bullet-spawn! sx (+ sy 1) dx dy 0 dmg life wpn)
+         #t)
+       (if (string=? wpn "bomb")
+           (bullet-spawn! sx sy
+                          (if (= dx 0) 1 dx)
+                          (if (= dy 0) 1 dy)
+                          0 dmg (- life 2) wpn)
+         #t)
+       #t))))
+
+; NPC fires toward pet center.
+(define (battle-npc-try-fire! px py)
+  (if (> *npc-fire-cd* 0)
+      (begin (set! *npc-fire-cd* (- *npc-fire-cd* 1)) #f)
+    (begin
+      (set! *npc-fire-cd* 28)
+      (let loop ((xs *world-npcs*))
+        (if (null? xs)
+            #t
+          (let* ((n (car xs))
+                 (name (car n))
+                 (x (car (cdr n)))
+                 (y (car (cdr (cdr n))))
+                 (kind (car (cdr (cdr (cdr n))))))
+            (if (npc-dying? name)
+                (loop (cdr xs))
+              (let* ((dx0 (- px x))
+                     (dy0 (- py y))
+                     (adx (if (< dx0 0) (- 0 dx0) dx0))
+                     (ady (if (< dy0 0) (- 0 dy0) dy0))
+                     (far (> (+ adx ady) 22)))
+                (if far
+                    (loop (cdr xs))
+                  (let* ((dx (if (> adx ady) (if (> dx0 0) 1 -1) 0))
+                         (dy (if (>= ady adx) (if (> dy0 0) 1 -1) 0))
+                         (dx2 (if (and (= dx 0) (= dy 0)) 1 dx))
+                         (dy2 dy))
+                    (bullet-spawn! (+ x 1) y dx2 dy2 1
+                                   (combat-npc-atk kind) 18 "shot")
+                    (loop (cdr xs))))))))))))
+
+; Hit-test bullet vs NPCs (pet team) or pet (npc team).
+; Returns updated bullet list (drop if hit / oob / dead).
+(define (battle-bullet-hit-npc! b)
+  ; b = (x y dx dy team dmg life wpn)
+  (let* ((bx (car b))
+         (by (car (cdr b)))
+         (dmg (car (cdr (cdr (cdr (cdr (cdr b))))))))
+    (let loop ((xs *world-npcs*) (hit #f))
+      (if (or hit (null? xs))
+          hit
+        (let* ((n (car xs))
+               (name (car n))
+               (nx (car (cdr n)))
+               (ny (car (cdr (cdr n))))
+               (kind (car (cdr (cdr (cdr n))))))
+          (if (npc-dying? name)
+              (loop (cdr xs) #f)
+            (if (and (<= bx (+ nx 3)) (>= bx (- nx 0))
+                     (<= by (+ ny 2)) (>= by (- ny 0)))
+                (begin
+                  ; apply damage
+                  (let* ((hp (combat-npc-hp-get name kind))
+                         (nh (- hp dmg)))
+                    (fx-spawn! nx (- ny 1)
+                               (string-append "-" (number->string dmg)) 12)
+                    (npc-flash-set! name 6)
+                    (if (<= nh 0)
+                        (begin
+                          (combat-npc-hp-set! name 0)
+                          (npc-dying-set! name 10)
+                          (fx-spawn! nx ny "X.X" 14)
+                          (fx-spawn! (+ nx 1) (- ny 1) "KO" 12))
+                      (combat-npc-hp-set! name nh))
+                    #t))
+              (loop (cdr xs) #f))))))))
+
+(define (battle-bullet-hit-pet! b pet-x pet-y)
+  (let* ((bx (car b))
+         (by (car (cdr b)))
+         (dmg (car (cdr (cdr (cdr (cdr (cdr b))))))))
+    (if (and (<= bx (+ pet-x 10)) (>= bx pet-x)
+             (<= by (+ pet-y 5)) (>= by pet-y))
+        (begin
+          (combat-set-hp! (- (combat-hp) dmg))
+          (fx-spawn! pet-x (- pet-y 1)
+                     (string-append "-" (number->string dmg)) 12)
+          (anim-start! "fight" 6)
+          #t)
+      #f)))
+
+(define (battle-bullets-tick! pet-x pet-y)
+  (set! *bullets*
+    (let loop ((xs *bullets*) (acc '()))
+      (if (null? xs)
+          (reverse acc)
+        (let* ((b (car xs))
+               (x (car b))
+               (y (car (cdr b)))
+               (dx (car (cdr (cdr b))))
+               (dy (car (cdr (cdr (cdr b)))))
+               (team (car (cdr (cdr (cdr (cdr b))))))
+               (dmg (car (cdr (cdr (cdr (cdr (cdr b)))))))
+               (life (car (cdr (cdr (cdr (cdr (cdr (cdr b))))))))
+               (wpn (car (cdr (cdr (cdr (cdr (cdr (cdr (cdr b)))))))))
+               (nx (+ x dx))
+               (ny (+ y dy))
+               (nl (- life 1))
+               (nb (list nx ny dx dy team dmg nl wpn)))
+          (cond
+            ((or (<= nl 0)
+                 (< nx *b-x0*) (>= nx *b-x1*)
+                 (< ny *b-y0*) (>= ny *b-y1*))
+             (loop (cdr xs) acc))
+            ((= team 0)
+             (if (battle-bullet-hit-npc! nb)
+                 (loop (cdr xs) acc)
+               (loop (cdr xs) (cons nb acc))))
+            (else
+             (if (battle-bullet-hit-pet! nb pet-x pet-y)
+                 (loop (cdr xs) acc)
+               (loop (cdr xs) (cons nb acc)))))))))
+  #t)
+
+(define (battle-draw-bullets!)
+  (let loop ((xs *bullets*))
+    (if (null? xs) #t
+      (let* ((b (car xs))
+             (x (car b))
+             (y (car (cdr b)))
+             (team (car (cdr (cdr (cdr (cdr b))))))
+             (wpn (car (cdr (cdr (cdr (cdr (cdr (cdr (cdr b)))))))))
+             (ch (cond
+                   ((string=? wpn "beam") "=")
+                   ((string=? wpn "bomb") "O")
+                   ((string=? wpn "fire") "*")
+                   ((string=? wpn "double") "+")
+                   (else "o")))
+             (fg (if (= team 0)
+                     (cond
+                       ((string=? wpn "fire") (rgb 255 140 40))
+                       ((string=? wpn "beam") (rgb 120 220 255))
+                       ((string=? wpn "bomb") (rgb 255 220 80))
+                       (else (rgb 255 255 180)))
+                   (rgb 255 100 120))))
+        (draw-text x y ch fg 0)
+        (loop (cdr xs))))))
+
+; Full battle tick once per play frame.
+(define (battle-tick! pet pet-x pet-y)
+  (if (> *pet-fire-cd* 0)
+      (set! *pet-fire-cd* (- *pet-fire-cd* 1))
+    #t)
+  (battle-bullets-tick! pet-x pet-y)
+  (battle-npc-try-fire! (+ pet-x 5) (+ pet-y 2))
+  (fx-tick!)
+  (npc-flash-tick!)
+  (npc-dying-tick!)
+  #t)
+
+; Draw everything battle-related (after NPCs, before/after cat).
+(define (battle-draw-overlay!)
+  (battle-draw-bullets!)
+  (fx-draw!)
+  #t)
+
+; Draw NPC HP bars + flash/death tint helpers for world-draw path.
+; Call after world-draw-npcs or integrate.
+(define (battle-draw-npc-hud! frame)
+  (let loop ((xs *world-npcs*))
+    (if (null? xs) #t
+      (let* ((n (car xs))
+             (name (car n))
+             (x (car (cdr n)))
+             (y (car (cdr (cdr n))))
+             (kind (car (cdr (cdr (cdr n)))))
+             (hp (combat-npc-hp-get name kind))
+             (mx (combat-npc-max kind))
+             (dying (npc-dying? name))
+             (flash (> (npc-flash-get name) 0)))
+        (if dying
+            (draw-text x y "..." (rgb 255 80 80) 0)
+          (begin
+            (draw-npc-hp-bar! x (- y 1) hp mx)
+            (if flash
+                (draw-text (+ x 4) y "!" (rgb 255 255 0) 0)
+              #t)))
+        (loop (cdr xs))))))
