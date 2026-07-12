@@ -1,0 +1,132 @@
+; lib/pet-game.aura — kids session logic (business only).
+;
+; Depends on pet-lifecycle (already loaded). No require of stdlib here.
+; Tracks love + speech + soft evolve gates. Care messages are short ASCII
+; so HUD stays safe under Aura's first-codepoint cell painting.
+
+(define *love* 0)
+(define *speech* "Hi! I am Mochi. Press 1 2 3!")
+(define *last-act* "idle")
+(define *care-count* 0)
+
+(define (game-empty)
+  (substring "x" 0 0))
+
+(define (game-reset!)
+  (set! *love* 0)
+  (set! *care-count* 0)
+  (set! *last-act* "idle")
+  (set! *speech* "Hi! I am Mochi. Press 1 2 3!")
+  #t)
+
+(define (game-love) *love*)
+(define (game-speech) *speech*)
+(define (game-last-act) *last-act*)
+(define (game-care-count) *care-count*)
+
+(define (game-set-speech! s)
+  (set! *speech* s)
+  #t)
+
+(define (game-add-love! n)
+  (set! *love* (+ *love* n))
+  (if (> *love* 9) (set! *love* 9) #t)
+  *love*)
+
+; Soft floor: vitals never below 1 (no "death" for kids).
+(define (game-soft-tick pet)
+  (let ((h (pet-hunger pet))
+        (m (pet-mood pet))
+        (e (pet-energy pet)))
+    (let ((nh (if (> h 2) (- h 1) h))
+          (ne (if (> e 2) (- e 1) e)))
+      (if (and (= nh h) (= ne e))
+          pet
+        (let ((u (pet-with-vitals pet nh m ne)))
+          (store-put! (pet-id u) u)
+          u)))))
+
+; Ready to grow: cared enough + not sad + not starving.
+(define (game-can-evolve? pet)
+  (and (= (pet-version pet) 0)
+       (>= *love* 3)
+       (>= (pet-mood pet) 7)
+       (>= (pet-hunger pet) 5)))
+
+(define (game-love-stars)
+  (cond
+    ((<= *love* 0) "...")
+    ((= *love* 1) "*..")
+    ((= *love* 2) "**.")
+    (else "***")))
+
+(define (game-mood-kid p)
+  (let ((m (pet-mood p)))
+    (if (>= m 8) "happy"
+      (if (>= m 5) "ok" "sad"))))
+
+; Returns (keep-going? . pet). keep-going? #f means quit.
+; Speech + love updated as side effects.
+(define (game-do pet cmd)
+  (cond
+    ((or (string=? cmd "quit") (string=? cmd "q") (string=? cmd "exit")
+         (string=? cmd "bye"))
+     (set! *speech* "Bye-bye! Come back soon!")
+     (set! *last-act* "bye")
+     (cons #f pet))
+
+    ((or (string=? cmd "help") (string=? cmd "?"))
+     (set! *speech* "1=eat  2=play  3=sleep  e=grow  q=bye")
+     (set! *last-act* "help")
+     (cons #t pet))
+
+    ((or (string=? cmd "feed") (string=? cmd "1") (string=? cmd "f")
+         (string=? cmd "eat"))
+     (let ((u (pet-feed pet)))
+       (set! *care-count* (+ *care-count* 1))
+       (game-add-love! 1)
+       (set! *last-act* "eat")
+       (set! *speech* "Yum yum! So good!")
+       (cons #t u)))
+
+    ((or (string=? cmd "play") (string=? cmd "2") (string=? cmd "p"))
+     (let ((u (pet-play pet)))
+       (set! *care-count* (+ *care-count* 1))
+       (game-add-love! 1)
+       (set! *last-act* "play")
+       (set! *speech* "Wheee! That was fun!")
+       (cons #t u)))
+
+    ((or (string=? cmd "sleep") (string=? cmd "3") (string=? cmd "s")
+         (string=? cmd "z"))
+     (let ((u (pet-sleep pet)))
+       (set! *care-count* (+ *care-count* 1))
+       (game-add-love! 1)
+       (set! *last-act* "sleep")
+       (set! *speech* "Zzz... feeling cozy.")
+       (cons #t u)))
+
+    ((or (string=? cmd "evolve") (string=? cmd "e") (string=? cmd "grow"))
+     (if (not (= (pet-version pet) 0))
+         (begin
+           (set! *speech* "Already grown! Keep caring.")
+           (set! *last-act* "idle")
+           (cons #t pet))
+       (if (game-can-evolve? pet)
+           (let ((u (pet-evolve pet "/tmp/brain-v2" "love")))
+             (set! *last-act* "evolve")
+             (set! *speech* "Sparkle!! New look!")
+             (game-add-love! 1)
+             (cons #t u))
+         (begin
+           (set! *last-act* "idle")
+           (set! *speech*
+             (if (< *love* 3)
+                 "Need more love! Care with 1 2 3."
+               "Need happy + full tummy to grow."))
+           (cons #t pet)))))
+
+    (else
+     (set! *speech* "Huh? Try 1 2 3 or help")
+     (set! *last-act* "idle")
+     (cons #t pet))))
