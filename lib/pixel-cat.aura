@@ -1,0 +1,97 @@
+; lib/pixel-cat.aura — half-block (tui:pixel) cat + soft room.
+;
+; Logical pixels are 2 per terminal row via half-blocks.
+; Call only after (tui:init ...). Colors via rgb inside procs (load-safe).
+;
+; (draw-room! W H)
+; (draw-pixel-cat! col row blink? mood-word version)
+; mood-word: "happy" | "ok" | "sad"
+
+(define (px col row top bot)
+  (tui:pixel col row top bot)
+  #t)
+
+; Soft night room: sky + floor. y-range leaves HUD (0..y0-1) and prompt (y1..h-1).
+(define (draw-room! w h y0 y1)
+  (let* ((sky (rgb 18 22 40))
+         (sky2 (rgb 28 34 58))
+         (floor1 (rgb 48 36 58))
+         (floor2 (rgb 62 44 70))
+         (star (rgb 220 230 255))
+         (floor-y (- y1 2)))
+    (let y-loop ((y y0))
+      (if (>= y y1) #t
+        (begin
+          (let x-loop ((x 0))
+            (if (>= x w) #t
+              (begin
+                (if (>= y floor-y)
+                    (px x y floor1 floor2)
+                  (px x y sky sky2))
+                (x-loop (+ x 1)))))
+          (y-loop (+ y 1)))))
+    (px 3 (+ y0 1) star sky)
+    (px 12 (+ y0 2) star sky)
+    (px 28 (+ y0 1) star sky)
+    (px 40 (+ y0 2) star sky)
+    (px 8 (+ y0 3) star sky)
+    #t))
+
+; 12-cell-wide × 5-cell-tall half-block cat (≈12×10 logical px).
+; col/row = top-left terminal cell of the sprite.
+(define (draw-pixel-cat! col row blink? mood version)
+  (let* ((fur (if (= version 0) (rgb 255 186 140) (rgb 255 140 200)))
+         (fur2 (if (= version 0) (rgb 240 150 110) (rgb 230 100 170)))
+         (ear (rgb 255 140 160))
+         (eye (if blink? fur (rgb 40 36 55)))
+         (eye2 (if (string=? mood "happy") (rgb 80 200 120) eye))
+         (nose (rgb 255 100 140))
+         (cheek (rgb 255 150 170))
+         (trans 0)
+         (c col)
+         (r row))
+    ; row0: ears
+    (px (+ c 2) r ear fur)
+    (px (+ c 3) r fur fur)
+    (px (+ c 8) r fur fur)
+    (px (+ c 9) r ear fur)
+    ; row1: head top
+    (px (+ c 2) (+ r 1) fur fur2)
+    (px (+ c 3) (+ r 1) fur fur)
+    (px (+ c 4) (+ r 1) fur fur)
+    (px (+ c 5) (+ r 1) fur fur)
+    (px (+ c 6) (+ r 1) fur fur)
+    (px (+ c 7) (+ r 1) fur fur)
+    (px (+ c 8) (+ r 1) fur fur)
+    (px (+ c 9) (+ r 1) fur fur2)
+    ; row2: eyes + cheeks
+    (px (+ c 2) (+ r 2) fur2 fur)
+    (px (+ c 3) (+ r 2) fur fur)
+    (px (+ c 4) (+ r 2) eye2 fur)
+    (px (+ c 5) (+ r 2) fur fur)
+    (px (+ c 6) (+ r 2) fur fur)
+    (px (+ c 7) (+ r 2) eye2 fur)
+    (px (+ c 8) (+ r 2) fur fur)
+    (px (+ c 9) (+ r 2) fur2 fur)
+    (px (+ c 3) (+ r 2) cheek fur)
+    (px (+ c 8) (+ r 2) cheek fur)
+    ; row3: nose / mouth
+    (px (+ c 3) (+ r 3) fur fur2)
+    (px (+ c 4) (+ r 3) fur fur)
+    (px (+ c 5) (+ r 3) nose fur)
+    (px (+ c 6) (+ r 3) fur fur)
+    (px (+ c 7) (+ r 3) fur fur)
+    (px (+ c 8) (+ r 3) fur fur2)
+    ; row4: body
+    (px (+ c 2) (+ r 4) fur2 fur)
+    (px (+ c 3) (+ r 4) fur fur)
+    (px (+ c 4) (+ r 4) fur fur)
+    (px (+ c 5) (+ r 4) fur fur)
+    (px (+ c 6) (+ r 4) fur fur)
+    (px (+ c 7) (+ r 4) fur fur)
+    (px (+ c 8) (+ r 4) fur fur)
+    (px (+ c 9) (+ r 4) fur2 fur)
+    ; little paws / tail hint
+    (px (+ c 1) (+ r 4) fur2 fur2)
+    (px (+ c 10) (+ r 4) fur fur2)
+    #t))

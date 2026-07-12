@@ -1,5 +1,6 @@
-; examples/smoke.aura — Aura TUI smoke
+; examples/smoke.aura — Aura TUI + vitals smoke
 ; run.sh loads pet-lifecycle first. Use require (not nested load).
+; tui:cell = first codepoint only → use draw-text for strings.
 
 (require "std/tui/sprite" all:)
 (require "std/tui/canvas" all:)
@@ -8,34 +9,38 @@
 (define H 12)
 
 (define (draw-pet pet x y)
-  (tui:cell 0 0
-            (string-append (pet-species pet) " v" (number->string (pet-version pet))
-                           "  sprite=" (pet-sprite-id pet))
-            (rgb 0 220 255) 0 0)
-  (tui:cell 0 1
-            (string-append "evolves="
-                           (number->string (- (length (pet-history pet)) 1)))
-            (rgb 0 90 40) 0 0)
+  (draw-text 0 0
+             (string-append (pet-species pet) " v" (number->string (pet-version pet))
+                            " mood=" (pet-mood-word pet))
+             (rgb 0 220 255) 0)
+  (draw-text 0 1
+             (string-append "H" (number->string (pet-hunger pet))
+                            " M" (number->string (pet-mood pet))
+                            " E" (number->string (pet-energy pet))
+                            " evo=" (number->string (- (length (pet-history pet)) 1)))
+             (rgb 0 90 40) 0)
   (draw-sprite x y
                (if (= (pet-version pet) 0) CAT-IDLE-1 CAT-IDLE-2)
                NEON-PINK 0))
 
 (define (smoke-entry . args)
-  (tui:init "aura-pets Stage 0" W H)
+  (tui:init "aura-pets Stage 0.9" W H)
   (tui:hide-cursor)
   (tui:clear 0 0)
-  (define mochi (pet-make "mochi" "cat" "/tmp/cat-brain.aura" "cat-idle"))
-  (draw-pet mochi 4 4)
+  (define mochi0 (pet-make "mochi" "cat" "/tmp/cat-brain.aura" "cat-idle"))
+  (define mochi1 (pet-feed mochi0))
+  (draw-pet mochi1 4 4)
   (tui:present)
-  (display "=== FRAME 1 (v0) ===\n")
+  (display "=== FRAME 1 (v0 feed) ===\n")
   (display (tui:frame-ansi))
   (newline)
-  (define mochi-v1 (pet-evolve mochi "/tmp/cat-brain-v2.aura" "happy feeding"))
+  (define mochi2 (pet-evolve mochi1 "/tmp/cat-brain-v2.aura" "happy feeding"))
+  (define mochi3 (pet-play mochi2))
   (pet-render-sync)
   (tui:clear 0 0)
-  (draw-pet mochi-v1 4 4)
+  (draw-pet mochi3 4 4)
   (tui:present)
-  (display "=== FRAME 2 (v1 evolved) ===\n")
+  (display "=== FRAME 2 (v1 play) ===\n")
   (display (tui:frame-ansi))
   (newline)
   (tui:show-cursor)

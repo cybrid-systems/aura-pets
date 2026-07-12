@@ -1,8 +1,8 @@
 #!/bin/bash
 # run.sh — aura-pets entry point.
 #
-# Renders via Aura tui:* primitives (tui:init / tui:cell / tui:present /
-# tui:frame-ansi) + lib/std/tui/{sprite,canvas,run}.aura — not hand ANSI.
+# Renders via Aura tui:* (tui:init / tui:cell / tui:pixel / tui:present /
+# tui:frame-ansi) + lib/std/tui/{sprite,canvas} — not hand ANSI.
 
 set -e
 
@@ -29,8 +29,6 @@ fi
 
 export AURA_STDLIB_DIR
 export AURA_BIN
-# Runtime (require "std/...") resolves via AURA_PATH + "std/foo".
-# stdlib root is .../lib/std → parent .../lib must be on AURA_PATH.
 LIB_PARENT="$(cd "$(dirname "$AURA_STDLIB_DIR")" && pwd)"
 export AURA_PATH="${LIB_PARENT}${AURA_PATH:+:$AURA_PATH}"
 
@@ -39,16 +37,19 @@ FRAMES=8
 ENTRY_FN="cat-demo-anim"
 MODE="frames"   # frames | interactive | smoke
 
+# Shared lib load order (sibling loads from shell, not nested mid-file).
+LOAD_LIBS="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<USAGE
 Usage:
-  ./run.sh                  8 frames of cat demo via Aura tui:frame-ansi
+  ./run.sh                  8 frames care-script demo (Aura TUI)
   ./run.sh --frames N       N frames then exit
-  ./run.sh --loop           long headless anim (Ctrl-C to stop)
-  ./run.sh --interactive    raw-mode keys: e=evolve, arrows, q=quit
-  ./run.sh smoke            2-frame evolve smoke (TUI)
+  ./run.sh --loop           long headless anim
+  ./run.sh --interactive    prompt + hotkeys: 1/2/3/e, type cmds, q=quit
+  ./run.sh smoke            2-frame evolve smoke
   ./run.sh --example FILE   use a different example file
 USAGE
       exit 0
@@ -69,13 +70,14 @@ fi
 
 case "$MODE" in
   interactive)
-    EXPR="(begin (load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/$EXAMPLE\") (cat-demo-interactive))"
+    EXPR="(begin $LOAD_LIBS (load \"$SCRIPT_DIR/$EXAMPLE\") (cat-demo-interactive))"
     ;;
   smoke)
+    # smoke only needs lifecycle + sprite/canvas (loaded inside file)
     EXPR="(begin (load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/$EXAMPLE\") (smoke-entry))"
     ;;
   *)
-    EXPR="(begin (load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/$EXAMPLE\") ($ENTRY_FN $FRAMES))"
+    EXPR="(begin $LOAD_LIBS (load \"$SCRIPT_DIR/$EXAMPLE\") ($ENTRY_FN $FRAMES))"
     ;;
 esac
 

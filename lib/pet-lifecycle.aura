@@ -1,23 +1,25 @@
 ; lib/pet-lifecycle.aura — aura-pets vocabulary (NOT aura stdlib).
 ;
+; Pet record (9 fields):
+; (id species version region-mask behavior-path sprite-id history binding vitals)
+; vitals = (hunger mood energy) each 0..10
+;
 ; Wraps std/atomic-swap into pet-make / pet-evolve / pet-render-sync.
-; Keep top-level form count low: Aura multi-expr load can drop later
-; forms if the Begin wrapper is huge (require expands + many defines).
+; Care: pet-feed / pet-play / pet-sleep / pet-tick / pet-apply-cmd
 ;
 ; run.sh sets AURA_PATH so (require "std/...") resolves.
+; Do NOT call imported procs at top-level init after require (load bug).
 
 (require "std/atomic-swap" all:)
 
-; Pet record (8 fields):
-; (id species version region-mask behavior-path sprite-id history binding)
 (define (pet-field p i)
   (if (= i 0) (car p)
     (pet-field (cdr p) (- i 1))))
 
 (define (make-pet-record id species version region-mask
-                         behavior-path sprite-id history binding)
+                         behavior-path sprite-id history binding vitals)
   (list id species version region-mask
-        behavior-path sprite-id history binding))
+        behavior-path sprite-id history binding vitals))
 
 (define *pet-store* '())
 
@@ -37,18 +39,33 @@
         (loop (cdr cs)
               (modulo (+ (* h 33) (char->integer (car cs))) 1000000)))))
 
+(define (clamp10 n)
+  (if (< n 0) 0 (if (> n 10) 10 n)))
+
 (define (pet-version p) (pet-field p 2))
 (define (pet-species p) (pet-field p 1))
+(define (pet-id p) (pet-field p 0))
 (define (pet-sprite-id p) (pet-field p 5))
 (define (pet-behavior-path p) (pet-field p 4))
 (define (pet-history p) (pet-field p 6))
+(define (pet-vitals p) (pet-field p 8))
+(define (pet-hunger p) (car (pet-vitals p)))
+(define (pet-mood p) (car (cdr (pet-vitals p))))
+(define (pet-energy p) (car (cdr (cdr (pet-vitals p)))))
+
+(define (pet-with-vitals p hunger mood energy)
+  (make-pet-record
+    (pet-field p 0) (pet-field p 1) (pet-field p 2) (pet-field p 3)
+    (pet-field p 4) (pet-field p 5) (pet-field p 6) (pet-field p 7)
+    (list (clamp10 hunger) (clamp10 mood) (clamp10 energy))))
 
 (define (pet-make id-string species behavior-path sprite-id)
   (let* ((mask (pet-region species))
          (binding (make-binding id-string 0 sprite-id))
          (history (list (list 0 "born" 0 behavior-path)))
+         (vitals (list 7 7 7))
          (pet (make-pet-record id-string species 0 mask
-                               behavior-path sprite-id history binding)))
+                               behavior-path sprite-id history binding vitals)))
     (aot:set-region-mask mask)
     (aot:set-module-version 0)
     (store-put! id-string pet)
@@ -66,14 +83,78 @@
          (committed-binding (car sync-result))
          (entry (list new-version reason 0 new-behavior-path))
          (new-history (append (pet-field pet 6) (list entry)))
+         (vitals (list (pet-hunger pet)
+                       (clamp10 (+ (pet-mood pet) 2))
+                       (pet-energy pet)))
          (updated (make-pet-record id species new-version (pet-field pet 3)
                                    new-behavior-path new-sprite
-                                   new-history committed-binding)))
+                                   new-history committed-binding vitals)))
     (store-put! id updated)
     updated))
 
 (define (pet-evolve! pet new-behavior-path reason)
   (pet-evolve pet new-behavior-path reason))
+
+(define (pet-feed pet)
+  (let ((u (pet-with-vitals pet
+             (+ (pet-hunger pet) 3)
+             (+ (pet-mood pet) 1)
+             (pet-energy pet))))
+    (store-put! (pet-id u) u)
+    u))
+
+(define (pet-play pet)
+  (let ((u (pet-with-vitals pet
+             (- (pet-hunger pet) 1)
+             (+ (pet-mood pet) 3)
+             (- (pet-energy pet) 2))))
+    (store-put! (pet-id u) u)
+    u))
+
+(define (pet-sleep pet)
+  (let ((u (pet-with-vitals pet
+             (- (pet-hunger pet) 1)
+             (+ (pet-mood pet) 1)
+             (+ (pet-energy pet) 4))))
+    (store-put! (pet-id u) u)
+    u))
+
+; Passive decay once per few frames (gentle for kids).
+(define (pet-tick pet)
+  (let ((u (pet-with-vitals pet
+             (- (pet-hunger pet) 1)
+             (pet-mood pet)
+             (- (pet-energy pet) 1))))
+    (store-put! (pet-id u) u)
+    u))
+
+(define (pet-mood-word p)
+  (let ((m (pet-mood p)))
+    (if (>= m 8) "happy"
+      (if (>= m 5) "ok" "sad"))))
+
+(define (pet-face p blink?)
+  (let ((m (pet-mood p)))
+    (if blink? "-.-"
+      (if (>= m 8) "^_^"
+        (if (>= m 5) "o.o" "u.u")))))
+
+; Command string → (pet . log-message) | #f if unknown
+(define (pet-apply-cmd pet cmd)
+  (cond
+    ((or (string=? cmd "feed") (string=? cmd "1") (string=? cmd "f"))
+     (cons (pet-feed pet) "nom nom! hunger up"))
+    ((or (string=? cmd "play") (string=? cmd "2") (string=? cmd "p"))
+     (cons (pet-play pet) "play time! mood up"))
+    ((or (string=? cmd "sleep") (string=? cmd "3") (string=? cmd "s") (string=? cmd "z"))
+     (cons (pet-sleep pet) "zzz... energy up"))
+    ((or (string=? cmd "evolve") (string=? cmd "e"))
+     (cons (pet-evolve pet "/tmp/brain-v2" "care") "sparkle! evolved"))
+    ((or (string=? cmd "help") (string=? cmd "?"))
+     (cons pet "cmds: feed play sleep evolve | 1 2 3 e | quit"))
+    ((or (string=? cmd "quit") (string=? cmd "q") (string=? cmd "exit"))
+     (cons pet "QUIT"))
+    (else #f)))
 
 ; Frame-boundary drain for atomic-swap (call before tui:present).
 (define (pet-render-sync)
@@ -97,6 +178,6 @@
                       (pet-field pet 0) (pet-field pet 1)
                       (binding-target-version nb) (pet-field pet 3)
                       (pet-field pet 4) (binding-artifact-id nb)
-                      (pet-field pet 6) nb)))
+                      (pet-field pet 6) nb (pet-field pet 8))))
                 #f)))
         (loop)))))

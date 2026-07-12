@@ -1,95 +1,148 @@
-; examples/cat-demo.aura — Stage 0.8: Aura TUI pixel cat
+; examples/cat-demo.aura — Stage 0.9: care loop + prompt + pixel cat
 ;
-; Aura rendering stack (do NOT hand-roll \x1b ANSI):
-;   tui:init / tui:clear / tui:cell / tui:present / tui:frame-ansi
-;   (require "std/tui/sprite") (require "std/tui/canvas")
+; Layout (H=18):
+;   row 0-1   HUD (name, vitals bars, mood)  — text cells only
+;   row 2-15  room + half-block cat
+;   row 16    log
+;   row 17    input line  > ..._
 ;
-; IMPORTANT:
-;   1. Use require (not nested (load) of stdlib) — load replaces workspace AST.
-;   2. Do NOT call imported procs (e.g. rgb) at top-level init in a loaded
-;      file — that aborts the load and drops later defines + require exports.
-;      Use palette constants from canvas (NEON-PINK, MATRIX-GREEN, …) or
-;      literal RGB ints; call rgb only inside procedure bodies.
+; NOTE: tui:cell paints only the FIRST codepoint of a string — use draw-text
+;       or prompt-put-str! for multi-char lines.
 ;
-; run.sh already loads lib/pet-lifecycle.aura.
+; run.sh loads: pet-lifecycle, tui-prompt, pixel-cat, then this file.
 
 (require "std/tui/sprite" all:)
 (require "std/tui/canvas" all:)
 
 (define W 48)
-(define H 14)
-; Literals = (rgb 0 220 255) / (rgb 0 120 60) — avoid top-level rgb call after require.
+(define H 18)
 (define TITLE-CYAN 56575)
 (define HUD-DIM 30780)
+(define BAR-FG 65280)
+(define BAR-LO 16744448)
+(define IN-FG 16777215)
 (define BG 0)
+(define SCENE-Y0 2)
+(define SCENE-Y1 16)
+(define PROMPT-Y 16)
 
-(define (pet-frames version)
-  (if (= version 0)
-      (list CAT-IDLE-1 CAT-WALK-1)
-      (list CAT-IDLE-2 CAT-WALK-2)))
+(define (bar n)
+  (let* ((filled (if (< n 0) 0 (if (> n 10) 10 n)))
+         (empty (- 10 filled)))
+    (string-append
+      (let loop ((i 0) (s ""))
+        (if (>= i filled) s (loop (+ i 1) (string-append s "="))))
+      (let loop ((i 0) (s ""))
+        (if (>= i empty) s (loop (+ i 1) (string-append s ".")))))))
 
-(define (draw-hud pet frame-n)
-  (tui:cell 1 0 "aura-pets" TITLE-CYAN BG 1)
-  (tui:cell 12 0
-            (string-append (pet-species pet) " v" (number->string (pet-version pet))
-                           "  sprite=" (pet-sprite-id pet)
-                           "  evo=" (number->string (- (length (pet-history pet)) 1))
-                           "  f=" (number->string frame-n))
-            MATRIX-GREEN BG 0)
-  (tui:cell 1 1 "[auto-evolve @ frame 4]" HUD-DIM BG 0)
+(define (draw-hud! pet frame-n)
+  (draw-text 1 0 "aura-pets" TITLE-CYAN BG)
+  (draw-text 12 0
+             (string-append (pet-id pet) " v" (number->string (pet-version pet))
+                            " " (pet-mood-word pet)
+                            " f=" (number->string frame-n))
+             MATRIX-GREEN BG)
+  (draw-text 1 1
+             (string-append
+               "H[" (bar (pet-hunger pet)) "] "
+               "M[" (bar (pet-mood pet)) "] "
+               "E[" (bar (pet-energy pet)) "]")
+             (if (< (pet-mood pet) 5) BAR-LO BAR-FG) BG)
   #t)
 
-(define (draw-pet-scene pet frame-n cat-x cat-y)
+(define (draw-scene! pet frame-n cat-x cat-y)
   (tui:clear BG BG)
-  (draw-hud pet frame-n)
-  (draw-anim cat-x cat-y (pet-frames (pet-version pet)) frame-n NEON-PINK BG)
+  (draw-room! W H SCENE-Y0 SCENE-Y1)
+  (draw-hud! pet frame-n)
+  (draw-pixel-cat! cat-x cat-y
+                   (= (modulo frame-n 6) 5)
+                   (pet-mood-word pet)
+                   (pet-version pet))
+  (draw-text cat-x (+ cat-y 5)
+             (string-append "(" (pet-face pet (= (modulo frame-n 6) 5)) ")")
+             NEON-PINK BG)
+  (prompt-draw! HUD-DIM IN-FG BG)
   (tui:present)
   #t)
 
+(define (apply-result pet pair)
+  (if (not pair)
+      (begin (prompt-set-log! "huh? type help") pet)
+    (let ((next (car pair)) (msg (cdr pair)))
+      (prompt-set-log! msg)
+      next)))
+
+(define (handle-cmd pet cmd)
+  (let ((pair (pet-apply-cmd pet cmd)))
+    (if (and pair (string=? (cdr pair) "QUIT"))
+        (cons #f pet)
+      (cons #t (apply-result pet pair)))))
+
+; Headless scripted demo (CI / ./run.sh --frames N)
 (define (cat-demo-anim n)
-  (tui:init "aura-pets cat" W H)
+  (tui:init "aura-pets" W H)
   (tui:hide-cursor)
+  (prompt-init! PROMPT-Y)
   (define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
-  (let loop ((i 0) (current mochi) (cat-x 4) (cat-y 5))
+  (let loop ((i 0) (current mochi) (cat-x 8) (cat-y 6))
     (if (>= i n)
       (begin (tui:show-cursor) (tui:shutdown) "DONE")
       (begin
-        (define next
-          (if (and (= i 4) (= (pet-version current) 0))
-              (pet-evolve current "/tmp/brain-v2" "feed")
-              current))
+        (define stepped
+          (cond
+            ((= i 2) (apply-result current (pet-apply-cmd current "feed")))
+            ((= i 4) (apply-result current (pet-apply-cmd current "play")))
+            ((= i 6) (apply-result current (pet-apply-cmd current "sleep")))
+            ((and (= i 5) (= (pet-version current) 0))
+             (apply-result current (pet-apply-cmd current "evolve")))
+            ((and (> i 0) (= (modulo i 5) 0))
+             (pet-tick current))
+            (else current)))
         (pet-render-sync)
-        (draw-pet-scene next i cat-x cat-y)
+        (draw-scene! stepped i cat-x cat-y)
         (display "\n=== Frame ")
         (display (number->string i))
         (display " v")
-        (display (number->string (pet-version next)))
+        (display (number->string (pet-version stepped)))
+        (display " mood=")
+        (display (pet-mood-word stepped))
         (display " ===\n")
         (display (tui:frame-ansi))
         (newline)
-        (loop (+ i 1) next (modulo (+ cat-x 1) (- W 12)) cat-y)))))
+        (loop (+ i 1) stepped
+              (modulo (+ cat-x 1) (- W 14))
+              cat-y)))))
 
+; Interactive: prompt + hotkeys (Grok Build–style bottom bar)
 (define (cat-demo-interactive)
-  (tui:init "aura-pets cat" W H)
+  (tui:init "aura-pets" W H)
   (tui:hide-cursor)
   (tui:raw-mode-on)
+  (prompt-init! PROMPT-Y)
   (define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
-  (let loop ((frame 0) (current mochi) (cat-x 4) (cat-y 5) (running #t))
+  (let loop ((frame 0) (current mochi) (cat-x 8) (cat-y 6) (running #t))
     (if (not running)
       (begin (tui:raw-mode-off) (tui:show-cursor) (tui:shutdown) "QUIT")
       (begin
         (pet-render-sync)
-        (draw-pet-scene current frame cat-x cat-y)
-        (let ((e (tui:read-event 80)))
-          (if (and (pair? e)
-                   (or (string=? (car e) "quit")
-                       (and (string=? (car e) "key")
-                            (or (string=? (cdr e) "q") (string=? (cdr e) "Q")))))
-              (loop frame current cat-x cat-y #f)
-              (if (and (pair? e) (string=? (car e) "key")
-                       (or (string=? (cdr e) "e") (string=? (cdr e) "E")))
-                  (loop (+ frame 1)
-                        (pet-evolve current "/tmp/brain-v2" "manual")
-                        (modulo (+ cat-x 1) (- W 12)) cat-y #t)
-                  (loop (+ frame 1) current
-                        (modulo (+ cat-x 1) (- W 12)) cat-y #t))))))))
+        (draw-scene! current frame cat-x cat-y)
+        (let ((e (tui:read-event 100)))
+          (let ((act (prompt-handle e)))
+            (cond
+              ((not act)
+               (loop (+ frame 1) current
+                     (modulo (+ cat-x (if (= (modulo frame 8) 0) 1 0)) (- W 14))
+                     cat-y #t))
+              ((string=? act "quit")
+               (loop frame current cat-x cat-y #f))
+              ((string=? act "hot")
+               (let ((r (handle-cmd current (prompt-hot))))
+                 (loop (+ frame 1) (cdr r) cat-x cat-y (car r))))
+              ((string=? act "submit")
+               (let ((cmd (prompt-take-submit!)))
+                 (if (= (string-length cmd) 0)
+                     (loop (+ frame 1) current cat-x cat-y #t)
+                   (let ((r (handle-cmd current cmd)))
+                     (loop (+ frame 1) (cdr r) cat-x cat-y (car r))))))
+              (else
+               (loop frame current cat-x cat-y #t)))))))))
