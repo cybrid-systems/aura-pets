@@ -1,64 +1,44 @@
-; examples/smoke.aura — Stage 0: rendered visual smoke
-;
-; Real TUI render (headless mode): draws a pet, evolves it, shows the new
-; sprite. ANSI frames are emitted to stdout.
-;
-; Convention:
-;   Top-level of smoke.aura defines helpers + a top-level entry function.
-;   run.sh loads and explicitly calls the entry — avoids Aura REPL bug
-;   where top-level (define X) + (X) silently fails when X has ':' in its name.
+; examples/smoke.aura — Aura TUI smoke
+; run.sh loads pet-lifecycle first. Use require (not nested load).
 
-(load "/home/dev/code/aura/lib/std/tui/sprite.aura")
-(load "/home/dev/code/aura/lib/std/tui/canvas.aura")
-(load "/home/dev/code/aura-pets/lib/pet-lifecycle.aura")
+(require "std/tui/sprite" all:)
+(require "std/tui/canvas" all:)
 
-; ── Constants ──
 (define W 48)
-(define H 16)
-(define rgb (lambda (r g b) (+ (* r 65536) (* g 256) b)))
-(define NEON-CYAN (rgb 0 220 255))
-(define DIM       32768)
+(define H 12)
 
-; ── Single frame ──
-(define draw-pet
-  (lambda (pet x y)
-    (let ((sprite-id (pet-sprite-id pet))
-          (version   (pet-version pet))
-          (species   (pet-species pet)))
-      (tui:cell 0 0
-                (string-append species " v" (number->string version)
-                               "  sprite=" sprite-id)
-                NEON-CYAN 0 0)
-      (tui:cell 0 1
-                (string-append "evolves="
-                               (number->string (- (length (pet-history pet)) 1)))
-                DIM 0 0)
-      (draw-sprite x y
-                   (if (= version 0) CAT-IDLE-1 CAT-IDLE-2)
-                   NEON-CYAN 0))))
+(define (draw-pet pet x y)
+  (tui:cell 0 0
+            (string-append (pet-species pet) " v" (number->string (pet-version pet))
+                           "  sprite=" (pet-sprite-id pet))
+            (rgb 0 220 255) 0 0)
+  (tui:cell 0 1
+            (string-append "evolves="
+                           (number->string (- (length (pet-history pet)) 1)))
+            (rgb 0 90 40) 0 0)
+  (draw-sprite x y
+               (if (= (pet-version pet) 0) CAT-IDLE-1 CAT-IDLE-2)
+               NEON-PINK 0))
 
-; ── Top-level entry ──
-(define smoke-entry
-  (lambda ()
-    (tui:init "aura-pets Stage 0" W H)
-    (tui:hide-cursor)
-
-    (tui:clear 0 0)
-    (define mochi (pet-make "mochi" "cat" "/tmp/cat-brain.aura" "cat-idle"))
-    (draw-pet mochi 4 4)
-    (tui:present)
-    (display "=== FRAME 1 (v0) ===\n")
-    (display (tui:frame-ansi))
-    (newline)
-
-    (define mochi-v1 (pet-evolve mochi "/tmp/cat-brain-v2.aura" "happy feeding"))
-    (tui:clear 0 0)
-    (draw-pet mochi-v1 4 4)
-    (tui:present)
-    (display "=== FRAME 2 (v1 evolved) ===\n")
-    (display (tui:frame-ansi))
-    (newline)
-
-    (tui:show-cursor)
-    (tui:shutdown)
-    (display "=== DONE ===\n")))
+(define (smoke-entry . args)
+  (tui:init "aura-pets Stage 0" W H)
+  (tui:hide-cursor)
+  (tui:clear 0 0)
+  (define mochi (pet-make "mochi" "cat" "/tmp/cat-brain.aura" "cat-idle"))
+  (draw-pet mochi 4 4)
+  (tui:present)
+  (display "=== FRAME 1 (v0) ===\n")
+  (display (tui:frame-ansi))
+  (newline)
+  (define mochi-v1 (pet-evolve mochi "/tmp/cat-brain-v2.aura" "happy feeding"))
+  (pet-render-sync)
+  (tui:clear 0 0)
+  (draw-pet mochi-v1 4 4)
+  (tui:present)
+  (display "=== FRAME 2 (v1 evolved) ===\n")
+  (display (tui:frame-ansi))
+  (newline)
+  (tui:show-cursor)
+  (tui:shutdown)
+  (display "=== DONE ===\n")
+  #t)

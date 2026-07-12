@@ -4,124 +4,93 @@
 
 A playful experimental project exploring how [Aura](https://github.com/cybrid-systems/aura) — the AI-native Lisp programming language with auto-mutating ASTs — can create living, adaptive virtual pets.
 
-## ✨ What Makes It Special
+## What Makes It Special
 
-- **Self-evolving pets**: Pet logic, responses, and "personalities" are written in Aura and can **mutate** over time based on player interaction.
-- **Classic pet养成 with a twist**: Feed, play, train, and care for your pet — then watch it genuinely surprise you as its code evolves.
-- **Showcase of Aura's capabilities**: Demonstrates dynamic code modification, reflection, incremental compilation, and agent-like behavior in an interactive terminal-based game context.
-- **All-terminal pixel art** — no web, no GUI, just Aura + TUI. Same aesthetic as `examples/cyber_cat.aura` from the Aura repo, evolved.
+- **Self-evolving pets**: Pet logic and "personalities" are Aura code that can mutate over time.
+- **Aura TUI rendering**: Pixel art via Aura's `tui:*` primitives + `lib/std/tui/{sprite,canvas}` — not hand-rolled ANSI.
+- **atomic-swap evolution**: Versioned bindings via `lib/std/atomic-swap` wrapped as pet vocabulary in this repo.
 - Part of the **cybrid-systems** ecosystem.
-
-## Planned Features
-
-- Multiple pet species with different base traits
-- Visual evolution (appearance + behavior changes via `lib/std/atomic-swap`)
-- Training & interaction systems that trigger code mutations
-- Persistent saves with evolution history ("pet soul" versioning via `lib/std/persist`)
-- All-terminal pixel UI
-- Optional AI co-pilot that helps evolve pets
 
 ## Getting Started
 
-### 1. Build Aura from source (one-time)
+### 1. Build Aura
 
 ```bash
-cd /path/to/aura
+# Prefer aura-grok (latest tui / atomic-swap), or stock aura:
+cd /path/to/aura-grok   # or aura
 cmake -B build && cmake --build build --target aura -j
 ```
 
-If you have a parallel aura checkout under `~/code/grok-dev/aura-grok`, `run.sh` will prefer that one automatically.
+`run.sh` prefers `$AURA_GROK_HOME/build/aura` (default `~/code/grok-dev/aura-grok`), then `$AURA_HOME/build/aura`.
 
-### 2. Run the Stage-0 smoke test
+### 2. Run demos
 
 ```bash
 cd /path/to/aura-pets
-./run.sh                                # runs examples/smoke.aura
-./run.sh examples/smoke.aura             # explicit
-./run.sh examples/cat.aura "(cat-demo)" # pass extra args as the entry expression
+./run.sh                  # 8 frames of cat demo (Aura tui:frame-ansi)
+./run.sh --frames 4       # N frames then exit
+./run.sh smoke            # 2-frame evolve smoke (TUI)
+./run.sh --interactive    # raw-mode keys: e=evolve, q=quit
 ```
 
-`run.sh` sets `AURA_STDLIB_DIR` to your Aura repo's `lib/std/` so that
-`pet-lifecycle.aura` can `(load)` the generic primitives (`atomic-swap`,
-`hot-update`, `persist`) from there.
+`run.sh` sets:
 
-### 3. Verify it works
+- `AURA_STDLIB_DIR` → Aura's `lib/std`
+- `AURA_PATH` → Aura's `lib` (so `(require "std/...")` resolves)
 
-You should see:
+then evaluates:
+
+```scheme
+(load "lib/pet-lifecycle.aura")
+(load "examples/cat-demo.aura")   ; or smoke.aura
+(cat-demo-anim N)                 ; or smoke-entry / cat-demo-interactive
 ```
-INIT version=0
-INIT species=cat
-INIT sprite-id=cat-idle
-INIT history-len=1
-EVOLVED version=1
-EVOLVED sprite-id=cat-v1
-EVOLVED history-len=2
-SYNC=ok
-DONE
-```
+
+### 3. What you should see
+
+Cat frames with HUD (`aura-pets cat v0 …`) and a walking pixel cat (`/\_/\`, `( o.o )`, `> ^ <`). At frame 4 the pet auto-evolves to v1 (sprite eyes change). Smoke prints two frames (v0 → v1) then `=== DONE ===`.
 
 ## Project Structure
 
 ```
 aura-pets/
 ├── lib/
-│   └── pet-lifecycle.aura     ; pet:make / pet:evolve! / pet:history / :health / :save-soul
+│   └── pet-lifecycle.aura   ; pet-make / pet-evolve / pet-render-sync
 ├── examples/
-│   └── smoke.aura             ; CI smoke test (Stage 0)
-├── assets/                    ; sprites, animations
-├── run.sh                     ; entry point: sets AURA_STDLIB_DIR + runs aura
+│   ├── cat-demo.aura        ; Stage 0.8 TUI cat (tui:* + sprite/canvas)
+│   └── smoke.aura           ; short evolve + TUI smoke
+├── assets/
+├── run.sh
 ├── LICENSE
 └── README.md
 ```
 
+## Rendering stack
+
+| Layer | What |
+|-------|------|
+| Host | `tui:init` / `tui:cell` / `tui:present` / `tui:frame-ansi` |
+| Stdlib | `(require "std/tui/sprite" all:)` — `draw-sprite`, `draw-anim`, `CAT-IDLE-*` |
+| Stdlib | `(require "std/tui/canvas" all:)` — `rgb`, `NEON-PINK`, `MATRIX-GREEN`, … |
+| Pets | `pet-make` / `pet-evolve` / `pet-render-sync` (wraps `atomic-swap`) |
+
+**Do not** hand-build `\x1b[` escape strings for the main surface — use `tui:frame-ansi` (headless) or `tui:present` (live).
+
+### Aura `load` gotchas
+
+1. Prefer `(require "std/...")` over nested `(load …/lib/std/…)` inside example files — nested load can clobber the workspace AST mid-file.
+2. After `require` inside a **loaded** file, do **not** call imported procedures at top-level init (e.g. `(define C (rgb 0 220 255))`). That aborts the load and drops later `define`s plus require exports. Use palette constants (`NEON-PINK`, …) or literal RGB ints; call `rgb` only inside procedure bodies.
+
 ## How Pets Evolve
 
-Each pet's core behavior is expressed as Aura code. Using Aura's generic
-primitives (now in `lib/std/`):
+```scheme
+(define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
+(define mochi-v1 (pet-evolve mochi "/tmp/brain-v2" "feed"))
+(pet-render-sync)   ; drain atomic-swap before tui:present
+```
 
-- **AOT hot-reload** (`aot:reload` + `lib/std/hot-update` #1366 / #1370) — swap
-  behavior at runtime, per-evaluator region isolated (#1367), stale-closure-safe
-  via `bridge_epoch` (#1365).
-- **Atomic resource swap** (`lib/std/atomic-swap` #1380) — bind a behavior
-  version to its sprite ID, so behavior + visual evolve together at the
-  render-cycle boundary.
-- **Persistent souls** (`serialize-workspace` + `lib/std/persist` #1381) — save
-  the entire evaluator + AOT module state to a binary `.aura-soul` file.
-  Format `AURASOUL\x01 v1`.
-- **Incremental type check** (`incremental_infer` #148) + **post-mutation
-  invariant** (`typed_mutate` #147) — pets can't evolve into a broken state.
-
-This repo owns the **vocabulary layer** (`pet:make` / `pet:evolve!` / etc.).
-Aura's stdlib owns the **mechanism layer** (`swap-binding!` / `sync-bindings!` /
-`persist:save`). Each project composes its own vocab over generic mechanism.
-
-## Current Status
-
-🚧 **Stage 0 bootstrap** (Summer 2026 experimental project)
-
-Done:
-- Repo skeleton
-- `lib/pet-lifecycle.aura` shell with pet:make / pet:evolve! / pet:render-sync!
-- `examples/smoke.aura` smoke test that prints version / species / sprite /
-  history
-- `run.sh` wrapper
-
-Roadmap (development rhythm):
-- **Stage 1** — full pet-lifecycle stdlib (hot-reload wiring + persist + tests)
-- **Stage 2** — `examples/cat.aura` interactive demo (cyber_cat template +
-  pet system)
-- **Stage 3** — persistence (save-menu + autosave)
-- **Stage 4** — multi-pet + sub-region
-- **Stage 5** — polish + more species
-
-## Contributing
-
-This is currently a personal/experimental project. Feedback, ideas, and contributions are very welcome once it opens up!
+Pet records are plain lists (id, species, version, region-mask, behavior-path, sprite-id, history, binding). Evolution bumps version, updates the binding via `swap-binding!` / `sync-bindings!`, and appends history.
 
 ## License
 
-Apache-2.0 License (same as Aura)
-
----
-
-**Built with glowing particles and a lot of curiosity.**
+See [LICENSE](LICENSE).
