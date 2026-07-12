@@ -19,10 +19,10 @@
 (define IN-FG 16777215)
 (define SPEECH-FG 16776960)
 (define BG 0)
-; Layout: HUD 0-2 | room SCENE-Y0..SCENE-Y1-1 | speech SCENE-Y1 | prompt PROMPT-Y..
+; Layout: HUD 0-2 | room | speech SCENE-Y1 | Grok-style 3-row input box PROMPT-Y..+2
 (define SCENE-Y0 3)
-(define SCENE-Y1 20)
-(define PROMPT-Y 22)
+(define SCENE-Y1 18)
+(define PROMPT-Y 20)
 (define CAT-W 12)
 (define CAT-H 6)
 
@@ -41,11 +41,11 @@
     (set! W w)
     (set! H h)
     (set! SCENE-Y0 3)
-    ; leave 1 speech + 2 prompt rows at bottom
-    (set! SCENE-Y1 (clamp-n (- h 4) 8 (- h 3)))
-    (set! PROMPT-Y (- h 2))
-    ; widen prompt clear band (API on tui-prompt — cannot set! foreign defines)
-    (prompt-set-width! (clamp-n (- w 4) 40 (- w 2)))
+    ; leave 1 speech + 3-row bordered prompt box at bottom
+    (set! SCENE-Y1 (clamp-n (- h 5) 8 (- h 4)))
+    (set! PROMPT-Y (- h 3))
+    ; full-width Grok-style box (outer width)
+    (prompt-set-width! (clamp-n w 40 200))
     #t))
 (define BAR0 "..........")
 (define BAR1 "=.........")
@@ -137,7 +137,8 @@
     (draw-pixel-cat! cat-x draw-y blink (game-mood-kid pet)
                      (pet-version pet) pose phase)
     (draw-speech! pet cat-x cat-y frame-n)
-    (prompt-draw! HUD-DIM IN-FG BG 0 16777215)
+    ; log dim cyan on box fill; input bright; cursor black-on-white
+    (prompt-draw! 11189196 IN-FG BG 0 16777215)
     (tui:present)
     #t))
 

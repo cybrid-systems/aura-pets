@@ -18,29 +18,47 @@
 ; UTF-8: Chinese and other multi-byte keys accepted; cursor is codepoint-aware.
 ;
 ; API:
-;   (prompt-init! y)
+;   (prompt-init! y)           ; y = top row of 3-line Grok-style box
 ;   (prompt-set-log! msg)
 ;   (prompt-buf) (prompt-log) (prompt-hot) (prompt-cursor)
 ;   (prompt-handle e) → "quit"|"submit"|"edit"|"hot"|#f
 ;   (prompt-take-submit!)
 ;   (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
+;   (draw-utf8! col row str fg bg)  ; codepoint-safe colored text
+; Box (Grok Build–like):
+;   ┌─ status ──────────────────────────┐
+;   │ > typed input_                    │
+;   └───────────────────────────────────┘
 
 (define *prompt-y* 0)
 (define *prompt-buf* "x")
-(define *prompt-log* "hi! 1 2 3 care | type e/world/talk +Enter | CN ok")
+(define *prompt-log* "hi! 1 2 3 care | type words (CN ok)")
 (define *prompt-submit* "x")
 (define *prompt-hot* "x")
 ; *prompt-cursor* = byte index into *prompt-buf* (always on a codepoint boundary)
 (define *prompt-cursor* 0)
+; Outer width of the box in cells (includes border columns).
 (define *prompt-width* 76)
 ; max bytes in the input buffer (Chinese is 3 bytes/char)
 (define *prompt-max-bytes* 120)
+; Box chrome colors (RGB packed, same as canvas rgb)
+(define *prompt-border* 56797)     ; soft cyan
+(define *prompt-border-dim* 33808) ; dimmer cyan
+(define *prompt-fill* 791072)      ; dark slate fill 0x0C1220
 
 (define (prompt-set-width! n)
   (set! *prompt-width* n)
   #t)
 
 (define (prompt-width) *prompt-width*)
+
+(define (prompt-set-border-color! c)
+  (set! *prompt-border* c)
+  #t)
+
+(define (prompt-set-fill-color! c)
+  (set! *prompt-fill* c)
+  #t)
 
 ; Fresh empty — avoid "" literals (require can clobber empty string heap slots).
 (define (prompt-empty)
@@ -52,7 +70,7 @@
   (set! *prompt-submit* (prompt-empty))
   (set! *prompt-hot* (prompt-empty))
   (set! *prompt-cursor* 0)
-  (set! *prompt-log* "hi! 1 2 3 care | type words (CN ok) | e/world/talk +Enter")
+  (set! *prompt-log* "type words (CN ok) · 123 care · e/world/talk +Enter")
   #t)
 
 (define (prompt-set-log! msg)
@@ -400,17 +418,29 @@
              "edit")
             (else #f)))))))
 
-; Draw string by full UTF-8 codepoints (one cell each). Avoids splitting 中.
+; Draw string by full UTF-8 codepoints (one cell each). Keeps fg/bg on 中.
+; Returns next column after the last glyph.
 (define (prompt-put-str! col row str fg bg attr)
   (let ((n (string-length str)))
     (let loop ((i 0) (x col))
-      (if (>= i n) #t
+      (if (>= i n)
+          x
         (let ((len (prompt-cp-len str i)))
           (if (<= len 0)
-              #t
+              x
             (begin
               (tui:cell x row (substring str i (+ i len)) fg bg attr)
               (loop (+ i len) (+ x 1)))))))))
+
+; Public: colored UTF-8 text anywhere (fixes canvas draw-text byte-splitting).
+(define (draw-utf8! col row str fg bg)
+  (prompt-put-str! col row str fg bg 0)
+  #t)
+
+; Override std/tui/canvas draw-text once prompt is loaded — Chinese keeps color.
+(define (draw-text col row str fg bg)
+  (prompt-put-str! col row str fg bg 0)
+  #t)
 
 ; Clear a horizontal run with spaces (erase stale glyphs after shrink).
 (define (prompt-clear-run! col row n fg bg)
@@ -420,8 +450,38 @@
         (tui:cell (+ col i) row " " fg bg 0)
         (loop (+ i 1))))))
 
+; Horizontal run of one codepoint string (e.g. "─").
+(define (prompt-hline! col row n ch fg bg)
+  (let loop ((i 0))
+    (if (>= i n) #t
+      (begin
+        (tui:cell (+ col i) row ch fg bg 0)
+        (loop (+ i 1))))))
+
+; Clip log / input so they fit inside the box (by codepoint columns).
+(define (prompt-clip-cols str max-cols)
+  (if (<= max-cols 0)
+      (prompt-empty)
+    (let ((n (string-length str)))
+      (let loop ((i 0) (cols 0))
+        (if (or (>= i n) (>= cols max-cols))
+            (if (= i 0) (prompt-empty) (substring str 0 i))
+          (let ((len (prompt-cp-len str i)))
+            (if (or (<= len 0) (> (+ cols 1) max-cols))
+                (if (= i 0) (prompt-empty) (substring str 0 i))
+              (loop (+ i len) (+ cols 1)))))))))
+
+; Grok Build–style bordered input box (3 rows at *prompt-y*..+2).
 (define (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
-  (let* ((row (+ *prompt-y* 1))
+  (let* ((y0 *prompt-y*)
+         (y1 (+ y0 1))
+         (y2 (+ y0 2))
+         (x0 0)
+         (bw (if (< *prompt-width* 12) 12 *prompt-width*))
+         (x1 (+ x0 (- bw 1)))
+         (bfg *prompt-border*)
+         (bbg *prompt-fill*)
+         (inner-w (- bw 2))
          (left (prompt-left-part))
          (right (prompt-right-part))
          (rlen (string-length right))
@@ -432,14 +492,38 @@
          (rest (if (<= rlen cur-len)
                    (prompt-empty)
                  (substring right cur-len rlen)))
-         (base 3)
-         (left-cols (prompt-cp-count left)))
-    (prompt-put-str! 1 *prompt-y* *prompt-log* log-fg bg 0)
-    ; wipe input line then redraw
-    (prompt-clear-run! 1 row *prompt-width* in-fg bg)
-    (prompt-put-str! 1 row "> " in-fg bg 1)
-    (prompt-put-str! base row left in-fg bg 0)
-    ; block cursor under current display column (codepoint-based)
-    (tui:cell (+ base left-cols) row cur-ch cursor-fg cursor-bg 1)
-    (prompt-put-str! (+ base left-cols 1) row rest in-fg bg 0)
+         ; input starts after "│> "
+         (in-x (+ x0 3))
+         (in-max (- inner-w 3))
+         (left-cols (prompt-cp-count left))
+         (log-show (prompt-clip-cols *prompt-log* (- inner-w 2))))
+    ; ── top border with status title ──
+    (tui:cell x0 y0 "┌" bfg bbg 0)
+    (prompt-hline! (+ x0 1) y0 inner-w "─" bfg bbg)
+    (tui:cell x1 y0 "┐" bfg bbg 0)
+    ; status sits on the top rule (Grok-like chrome)
+    (prompt-put-str! (+ x0 2) y0 log-show log-fg bbg 0)
+    ; ── middle: input line ──
+    (tui:cell x0 y1 "│" bfg bbg 0)
+    (prompt-clear-run! (+ x0 1) y1 inner-w in-fg bbg)
+    (tui:cell x1 y1 "│" bfg bbg 0)
+    (prompt-put-str! (+ x0 1) y1 "> " in-fg bbg 1)
+    ; typed text + block cursor (clip if overlong)
+    (let* ((left-show (prompt-clip-cols left in-max))
+           (lc (prompt-cp-count left-show))
+           (cur-x (+ in-x lc)))
+      (prompt-put-str! in-x y1 left-show in-fg bbg 0)
+      (if (< cur-x x1)
+          (begin
+            (tui:cell cur-x y1 cur-ch cursor-fg cursor-bg 1)
+            (if (< (+ cur-x 1) x1)
+                (prompt-put-str! (+ cur-x 1) y1
+                                 (prompt-clip-cols rest (- x1 (+ cur-x 1)))
+                                 in-fg bbg 0)
+              #t))
+        #t))
+    ; ── bottom border ──
+    (tui:cell x0 y2 "└" bfg bbg 0)
+    (prompt-hline! (+ x0 1) y2 inner-w "─" bfg bbg)
+    (tui:cell x1 y2 "┘" bfg bbg 0)
     #t))
