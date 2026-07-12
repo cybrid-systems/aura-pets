@@ -48,8 +48,9 @@
 (define (world-clear-npcs!) (set! *world-npcs* '()) #t)
 (define (world-clear-props!) (set! *world-props* '()) #t)
 ; Keep entity counts modest for TUI frame budget + eval stack safety.
-(define *world-max-npcs* 8)
-(define *world-max-props* 14)
+; ~6 NPCs: readable, playable, and lighter draw path.
+(define *world-max-npcs* 6)
+(define *world-max-props* 12)
 
 (define (world-add-npc! npc)
   (if (>= (length *world-npcs*) *world-max-npcs*)
@@ -281,29 +282,41 @@
                           (if pr (world-add-prop! pr) #f))
                       #f)))))))))))
 
-; Split file text by newlines and apply (tail-recursive line scan).
+; Split file text by newlines and apply.
+; IMPORTANT: use host (while) — named-let per character is NOT TCO'd in Aura
+; and SIGSEGVs once the file is ~1KB+ (each eval_flat frame ≈ 8KB C stack).
+(define *wl-text* "")
+(define *wl-n* 0)
+(define *wl-i* 0)
+(define *wl-start* 0)
+
 (define (world-load-text! text)
   (set! *world-npcs* '())
   (set! *world-props* '())
-  (let ((n (string-length text)))
-    ; Bound work: skip pathological files (> 64KB)
-    (if (> n 65536)
-        (begin (set! *world-ok* #f) #f)
-      (let loop ((i 0) (start 0))
-        (if (>= i n)
-            (begin
-              (if (< start n)
-                  (world-apply-line! (substring text start n))
-                #t)
-              (set! *world-ok* #t)
-              #t)
-          (if (string=? (substring text i (+ i 1)) "\n")
-              (begin
-                (if (> i start)
-                    (world-apply-line! (substring text start i))
-                  #t)
-                (loop (+ i 1) (+ i 1)))
-            (loop (+ i 1) start)))))))
+  (set! *wl-text* text)
+  (set! *wl-n* (string-length text))
+  ; Bound work: skip pathological files (> 64KB)
+  (if (> *wl-n* 65536)
+      (begin (set! *world-ok* #f) #f)
+    (begin
+      (set! *wl-i* 0)
+      (set! *wl-start* 0)
+      (while (lambda () (< *wl-i* *wl-n*))
+             (lambda ()
+               (if (string=? (substring *wl-text* *wl-i* (+ *wl-i* 1)) "\n")
+                   (begin
+                     (if (> *wl-i* *wl-start*)
+                         (world-apply-line!
+                           (substring *wl-text* *wl-start* *wl-i*))
+                       #t)
+                     (set! *wl-i* (+ *wl-i* 1))
+                     (set! *wl-start* *wl-i*))
+                 (set! *wl-i* (+ *wl-i* 1)))))
+      (if (< *wl-start* *wl-n*)
+          (world-apply-line! (substring *wl-text* *wl-start* *wl-n*))
+        #t)
+      (set! *world-ok* #t)
+      #t)))
 
 (define (world-load! path)
   (set! *world-path* path)

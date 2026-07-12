@@ -97,6 +97,10 @@ case "$MODE" in
     ;;
 esac
 
+# Aura eval_flat uses ~8KB C stack per call; named-let is not reliably TCO'd.
+# Default shell stack (8MB) SIGSEGVs on deep loops / large loads. Raise limit.
+ulimit -s 32768 2>/dev/null || ulimit -s unlimited 2>/dev/null || true
+
 echo "aura=$AURA_BIN mode=$MODE" >&2
 if [ "$MODE" = "play" ]; then
   echo "log=$LOG_FILE  (tail -f \$log after/during play)" >&2

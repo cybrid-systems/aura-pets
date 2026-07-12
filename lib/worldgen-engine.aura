@@ -14,7 +14,7 @@
     "theme:<name>\nsky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
     "npc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
     "prop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
-    "Rules: 4-6 npc (max 8), 6-10 prop (max 12). ASCII names. "
+    "Rules: 4-6 npc (max 6), 6-10 prop (max 12). ASCII names. "
     "x in [2,COLS-4], y in [4,ROWS-7]. Kid-safe."))
 
 (define (worldgen-offline cols rows)
@@ -71,40 +71,61 @@
           (and (>= n 4) (string=? (substring line 0 4) "npc:"))
           (and (>= n 5) (string=? (substring line 0 5) "prop:"))))))
 
+; Host while scan — named-let over LLM-sized text SIGSEGVs (no TCO).
+(define *wg-text* "")
+(define *wg-n* 0)
+(define *wg-i* 0)
+(define *wg-start* 0)
+(define *wg-acc* "")
+(define *wg-nn* 0)
+(define *wg-np* 0)
+(define *wg-max-npc* 6)
+(define *wg-max-prop* 12)
+
 (define (worldgen-filter-text text cols rows)
-  (let ((n (string-length text))
-        (max-npc 8)
-        (max-prop 12))
-    (let loop ((i 0) (start 0) (acc (substring "x" 0 0))
-               (nn 0) (np 0))
-      (if (> i n)
-          acc
-        (if (or (= i n) (string=? (substring text i (if (= i n) i (+ i 1))) "\n"))
-            (let ((line (if (>= start i) (substring "x" 0 0)
-                          (substring text start i))))
-              (if (worldgen-keep-line? line)
-                  (let ((is-npc (and (>= (string-length line) 4)
-                                     (string=? (substring line 0 4) "npc:")))
-                        (is-prop (and (>= (string-length line) 5)
-                                      (string=? (substring line 0 5) "prop:"))))
-                    (if (and is-npc (>= nn max-npc))
-                        (if (= i n) acc (loop (+ i 1) (+ i 1) acc nn np))
-                      (if (and is-prop (>= np max-prop))
-                          (if (= i n) acc (loop (+ i 1) (+ i 1) acc nn np))
-                        (let ((nn2 (if is-npc (+ nn 1) nn))
-                              (np2 (if is-prop (+ np 1) np)))
-                          (if (= i n)
-                              (string-append acc line "\n")
-                            (loop (+ i 1) (+ i 1)
-                                  (string-append acc line "\n") nn2 np2))))))
-                (if (= i n) acc (loop (+ i 1) (+ i 1) acc nn np))))
-          (loop (+ i 1) start acc nn np))))))
+  (set! *wg-text* text)
+  (set! *wg-n* (string-length text))
+  (set! *wg-i* 0)
+  (set! *wg-start* 0)
+  (set! *wg-acc* (substring "x" 0 0))
+  (set! *wg-nn* 0)
+  (set! *wg-np* 0)
+  (while (lambda () (<= *wg-i* *wg-n*))
+         (lambda ()
+           (if (or (= *wg-i* *wg-n*)
+                   (string=? (substring *wg-text* *wg-i* (+ *wg-i* 1)) "\n"))
+               (begin
+                 (let ((line (if (>= *wg-start* *wg-i*)
+                                 (substring "x" 0 0)
+                               (substring *wg-text* *wg-start* *wg-i*))))
+                   (if (worldgen-keep-line? line)
+                       (let ((is-npc (and (>= (string-length line) 4)
+                                          (string=? (substring line 0 4) "npc:")))
+                             (is-prop (and (>= (string-length line) 5)
+                                           (string=? (substring line 0 5) "prop:"))))
+                         (if (and is-npc (>= *wg-nn* *wg-max-npc*))
+                             #t
+                           (if (and is-prop (>= *wg-np* *wg-max-prop*))
+                               #t
+                             (begin
+                               (if is-npc (set! *wg-nn* (+ *wg-nn* 1)) #t)
+                               (if is-prop (set! *wg-np* (+ *wg-np* 1)) #t)
+                               (set! *wg-acc*
+                                 (string-append *wg-acc* line "\n"))))))
+                     #t))
+                 (if (= *wg-i* *wg-n*)
+                     (set! *wg-i* (+ *wg-n* 1))
+                   (begin
+                     (set! *wg-i* (+ *wg-i* 1))
+                     (set! *wg-start* *wg-i*))))
+             (set! *wg-i* (+ *wg-i* 1)))))
+  *wg-acc*)
 
 (define (worldgen-llm cols rows)
   (let* ((user (string-append
                  "Terminal size COLS=" (number->string cols)
                  " ROWS=" (number->string rows) ". "
-                 "Create a cheerful crowded park: about 16 animal NPCs and 20 cover props."))
+                 "Create a cheerful park with about 5 animal NPCs and 8 cover props."))
          (raw (llm-chat *wg-system* user)))
     (if (not raw)
         #f
@@ -113,11 +134,12 @@
 
 ; Write world file. offline? forces no network.
 (define (worldgen-run! cols rows out-path offline?)
-  (let ((text
-          (if offline?
-              (worldgen-offline cols rows)
-            (let ((live (worldgen-llm cols rows)))
-              (if live live (worldgen-offline cols rows))))))
+  (let* ((raw
+           (if offline?
+               (worldgen-offline cols rows)
+             (let ((live (worldgen-llm cols rows)))
+               (if live live (worldgen-offline cols rows)))))
+         (text (worldgen-filter-text raw cols rows)))
     (try
       (begin
         (write-file out-path text)

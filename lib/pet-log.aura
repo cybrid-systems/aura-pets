@@ -85,15 +85,26 @@
           (set! *plog-last-flush* *plog-seq*)
           #t)))))
 
+; Host while — named-let over long strings blows eval_flat C stack.
+(define *ps-s* "")
+(define *ps-n* 0)
+(define *ps-i* 0)
+(define *ps-acc* "")
+
 (define (plog-shell-safe s)
-  (let ((n (string-length s)))
-    (let loop ((i 0) (acc (plog-empty)))
-      (if (>= i n) acc
-        (let ((ch (substring s i (+ i 1))))
-          (if (or (string=? ch "'") (string=? ch "\\") (string=? ch "\n")
-                  (string=? ch "\r"))
-              (loop (+ i 1) (string-append acc " "))
-            (loop (+ i 1) (string-append acc ch))))))))
+  (set! *ps-s* s)
+  (set! *ps-n* (string-length s))
+  (set! *ps-i* 0)
+  (set! *ps-acc* (plog-empty))
+  (while (lambda () (< *ps-i* *ps-n*))
+         (lambda ()
+           (let ((ch (substring *ps-s* *ps-i* (+ *ps-i* 1))))
+             (if (or (string=? ch "'") (string=? ch "\\") (string=? ch "\n")
+                     (string=? ch "\r"))
+                 (set! *ps-acc* (string-append *ps-acc* " "))
+               (set! *ps-acc* (string-append *ps-acc* ch)))
+             (set! *ps-i* (+ *ps-i* 1)))))
+  *ps-acc*)
 
 ; Log one line. Fields should be short ASCII (no spaces ideally, use |).
 (define (plog tag detail)
