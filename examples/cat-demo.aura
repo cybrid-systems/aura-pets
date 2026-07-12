@@ -12,13 +12,18 @@
 ; Defaults used until fit; play/demo call layout-fit! before tui:init.
 (define W 80)
 (define H 24)
-(define TITLE-CYAN 56575)
-(define HUD-DIM 30780)
-(define BAR-FG 65280)
-(define BAR-LO 16744448)
-(define IN-FG 16777215)
-(define SPEECH-FG 16776960)
-(define BG 0)
+; Truecolor HUD as packed 24-bit ints (r<<16|g<<8|b).
+; Do NOT call (rgb ...) at top-level after require — Aura can leave empty bindings.
+(define TITLE-CYAN 5302015)      ; 80 230 255
+(define HUD-DIM 9216190)         ; 140 160 190
+(define BAR-FG 5957240)          ; 90 230 120
+(define BAR-LO 16747590)         ; 255 140 70
+(define IN-FG 16120575)          ; 245 250 255
+(define SPEECH-FG 16770650)      ; 255 230 90
+(define SPEECH-BUBBLE 16755410)  ; 255 170 210
+(define BG 526866)               ; 8 10 18
+(define MATRIX-GREEN 6615190)    ; 100 240 150
+(define NEON-PINK 16742590)      ; 255 120 190
 ; Layout: HUD 0-2 | room | speech SCENE-Y1 | Grok-style 3-row input box PROMPT-Y..+2
 (define SCENE-Y0 3)
 (define SCENE-Y1 18)
@@ -122,7 +127,7 @@
         (blink (and (string=? (anim-kind) "idle") (= (modulo frame-n 6) 5))))
     (draw-text cat-x (+ cat-y 5)
                (string-append "(" (pose-face pose blink (game-mood-kid pet)) ")")
-               NEON-PINK BG)
+               SPEECH-BUBBLE BG)
     (draw-text 1 SCENE-Y1
                (string-append "\" " (game-speech) " \"")
                SPEECH-FG BG)
