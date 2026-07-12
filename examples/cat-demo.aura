@@ -1,9 +1,9 @@
-; examples/cat-demo.aura — R2.1: move + anim + safe play loop (no false quit)
+; examples/cat-demo.aura — R2.2: move + anim + debug log
 ;
-; Keys (empty prompt): arrows/wasd move, 1/2/3 care, e grow, q bye
-; Type: teach feed Hello | brain | help
+; Keys (empty prompt): arrows move, 1/2/3 care, e grow, q bye
+; Debug log: /tmp/aura-pets-debug.log (or AURA_PETS_LOG)
 ;
-; Load: lifecycle, edsl, anim, pet-game, pixel-cat, this, prompt(last)
+; Load order (run.sh): lifecycle edsl anim game pet-log pixel this prompt(last)
 
 (require "std/tui/sprite" all:)
 (require "std/tui/canvas" all:)
@@ -111,8 +111,6 @@
     (tui:present)
     #t))
 
-; Safe unpack: never treat a bad return as "quit".
-; game-do returns (keep? . pet); keep? must be boolean #f to stop.
 (define (apply-cmd pet cmd)
   (let ((r (game-do pet cmd)))
     (prompt-set-log! (game-speech))
@@ -121,16 +119,10 @@
 (define (still-going? r)
   (if (not (pair? r))
       #t
-    (if (eq? (car r) #f)
-        #f
-      #t)))
+    (if (eq? (car r) #f) #f #t)))
 
 (define (cmd-pet r pet-fallback)
-  (if (and (pair? r) (pair? (cdr r)))
-      (cdr r)
-    (if (and (pair? r) (not (eq? (cdr r) #t)) (not (eq? (cdr r) #f)))
-        (cdr r)
-      pet-fallback)))
+  (if (pair? r) (cdr r) pet-fallback))
 
 (define (move-by cat-x cat-y dx dy)
   (game-on-move!)
@@ -171,76 +163,146 @@
           (newline)
           (loop (+ i 1) stepped nx cat-y))))))
 
-; Play loop uses set! state so a non-TCO Aura still won't pack
-; (running . pet) incorrectly, and quit is only explicit q / quit cmd.
+; ── play state (module-level for simpler loop body) ──
+(define *p-pet* #f)
+(define *p-frame* 0)
+(define *p-x* 8)
+(define *p-y* 5)
+(define *p-running* #t)
+(define *p-tick* 0)
+(define *p-quit* "unknown")
+
+(define (evt-tag e)
+  (if (and (pair? e) (string? (car e))) (car e) "none"))
+
+(define (evt-pay e)
+  (if (and (pair? e) (string? (cdr e))) (cdr e) "-"))
+
+(define (pet-snap pet)
+  (string-append "love=" (number->string (game-love))
+                 " H=" (number->string (pet-hunger pet))
+                 " M=" (number->string (pet-mood pet))
+                 " E=" (number->string (pet-energy pet))
+                 " v=" (number->string (pet-version pet))
+                 " anim=" (anim-kind)
+                 " xy=" (number->string *p-x*) "," (number->string *p-y*)))
+
+(define (play-stop! reason)
+  (set! *p-quit* reason)
+  (set! *p-running* #f)
+  (plog "stop" reason)
+  #t)
+
+; Process one input event. Returns #t always (state via set!).
+(define (play-handle-event! e)
+  (let ((act (prompt-handle e)))
+    (if (or act (and (pair? e) (string? (car e))))
+        (plog-event *p-frame*
+                    (if (string? act) act "nil")
+                    (string-append "tag=" (evt-tag e) " pay=" (evt-pay e)
+                                   " " (pet-snap *p-pet*)))
+      #t)
+    (cond
+      ((and (string? act) (string=? act "quit"))
+       (play-stop!
+         (if (and (pair? e) (string=? (car e) "quit"))
+             "tui-quit-event"
+           (string-append "key-q pay=" (evt-pay e))))
+       (apply-cmd *p-pet* "q")
+       #t)
+      ((and (string? act) (string=? act "nav-left"))
+       (let ((xy (move-by *p-x* *p-y* -1 0)))
+         (set! *p-x* (car xy))
+         (set! *p-y* (cdr xy))
+         #t))
+      ((and (string? act) (string=? act "nav-right"))
+       (let ((xy (move-by *p-x* *p-y* 1 0)))
+         (set! *p-x* (car xy))
+         (set! *p-y* (cdr xy))
+         #t))
+      ((and (string? act) (string=? act "nav-up"))
+       (let ((xy (move-by *p-x* *p-y* 0 -1)))
+         (set! *p-x* (car xy))
+         (set! *p-y* (cdr xy))
+         #t))
+      ((and (string? act) (string=? act "nav-down"))
+       (let ((xy (move-by *p-x* *p-y* 0 1)))
+         (set! *p-x* (car xy))
+         (set! *p-y* (cdr xy))
+         #t))
+      ((and (string? act) (string=? act "hot"))
+       (let* ((cmd (prompt-hot))
+              (r (apply-cmd *p-pet* cmd)))
+         (plog "hot" (string-append "cmd=" cmd
+                                    " keep=" (if (still-going? r) "1" "0")))
+         (set! *p-pet* (cmd-pet r *p-pet*))
+         (if (still-going? r)
+             #t
+           (play-stop! (string-append "hot-cmd-stop=" cmd)))))
+      ((and (string? act) (string=? act "submit"))
+       (let ((cmd (prompt-take-submit!)))
+         (if (= (string-length cmd) 0)
+             #t
+           (let ((r (apply-cmd *p-pet* cmd)))
+             (plog "submit" (string-append "cmd=" cmd
+                                           " keep=" (if (still-going? r) "1" "0")))
+             (set! *p-pet* (cmd-pet r *p-pet*))
+             (if (still-going? r)
+                 #t
+               (play-stop! (string-append "submit-stop=" cmd)))))))
+      (else #t))))
+
+(define (play-step!)
+  (anim-tick!)
+  (pet-render-sync)
+  (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
+  (play-handle-event! (tui:read-event 80))
+  (set! *p-frame* (+ *p-frame* 1))
+  (set! *p-tick* (+ *p-tick* 1))
+  (if (and *p-running* (= (modulo *p-tick* 45) 0))
+      (begin
+        (set! *p-pet* (game-soft-tick *p-pet*))
+        (plog "tick" (pet-snap *p-pet*)))
+    #t)
+  #t)
+
 (define (cat-demo-interactive)
   (tui:init "aura-pets" W H #t)
   (tui:hide-cursor)
   (tui:raw-mode-on)
   (prompt-init! PROMPT-Y)
   (game-reset!)
-  (prompt-set-log! "Arrows move | 1 2 3 care | e grow | only q quits")
-  (define pet (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
-  (define frame 0)
-  (define cat-x 8)
-  (define cat-y 5)
-  (define running #t)
-  (define tick-n 0)
+  (prompt-set-log! "Arrows move | 1 2 3 care | e grow | q bye | log:/tmp/aura-pets-debug.log")
+  (set! *p-pet* (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
+  (set! *p-frame* 0)
+  (set! *p-x* 8)
+  (set! *p-y* 5)
+  (set! *p-running* #t)
+  (set! *p-tick* 0)
+  (set! *p-quit* "unknown")
+  (plog-start! (plog-path))
+  (plog "info" (pet-snap *p-pet*))
   (let iter ()
-    (if (not running)
+    (if (not *p-running*)
       (begin
-        (prompt-set-log! (game-speech))
-        (draw-scene! pet frame cat-x cat-y)
+        (plog-quit *p-quit* *p-frame* (pet-snap *p-pet*))
+        (prompt-set-log!
+          (string-append "bye (" *p-quit* ") log=" (plog-path)))
+        (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
         (tui:raw-mode-off)
         (tui:show-cursor)
         (tui:shutdown)
+        (plog-end! *p-quit*)
         "BYE")
       (begin
-        (anim-tick!)
-        (pet-render-sync)
-        (draw-scene! pet frame cat-x cat-y)
-        (let* ((e (tui:read-event 80))
-               (act (prompt-handle e)))
-          (cond
-            ; Quit only from prompt: empty-line q/Q or tui Ctrl-C quit event.
-            ((and (string? act) (string=? act "quit"))
-             (apply-cmd pet "q")
-             (set! running #f))
-            ((and (string? act) (string=? act "nav-left"))
-             (let ((xy (move-by cat-x cat-y -1 0)))
-               (set! cat-x (car xy))
-               (set! cat-y (cdr xy))))
-            ((and (string? act) (string=? act "nav-right"))
-             (let ((xy (move-by cat-x cat-y 1 0)))
-               (set! cat-x (car xy))
-               (set! cat-y (cdr xy))))
-            ((and (string? act) (string=? act "nav-up"))
-             (let ((xy (move-by cat-x cat-y 0 -1)))
-               (set! cat-x (car xy))
-               (set! cat-y (cdr xy))))
-            ((and (string? act) (string=? act "nav-down"))
-             (let ((xy (move-by cat-x cat-y 0 1)))
-               (set! cat-x (car xy))
-               (set! cat-y (cdr xy))))
-            ((and (string? act) (string=? act "hot"))
-             (let ((r (apply-cmd pet (prompt-hot))))
-               (set! pet (cmd-pet r pet))
-               (if (still-going? r) #t (set! running #f))))
-            ((and (string? act) (string=? act "submit"))
-             (let ((cmd (prompt-take-submit!)))
-               (if (> (string-length cmd) 0)
-                   (let ((r (apply-cmd pet cmd)))
-                     (set! pet (cmd-pet r pet))
-                     (if (still-going? r) #t (set! running #f)))
-                 #t)))
-            (else #t))
-          (set! frame (+ frame 1))
-          (set! tick-n (+ tick-n 1))
-          (if (and running (= (modulo tick-n 45) 0))
-              (set! pet (game-soft-tick pet))
-            #t)
-          (iter))))))
+        (try
+          (play-step!)
+          (catch (err)
+            (begin
+              (play-stop! "exception")
+              (plog "ERROR" "play-step-exception")
+              (plog-flush!))))
+        (iter)))))
 
-; Top-level entry used by run.sh (must stay outside cat-demo-interactive).
 (define (play-entry)
   (cat-demo-interactive))

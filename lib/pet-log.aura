@@ -1,0 +1,132 @@
+; lib/pet-log.aura — debug log for play-session diagnosis.
+;
+; Writes to path from env AURA_PETS_LOG, or default
+;   /tmp/aura-pets-debug.log
+;
+; Always on for play (cheap). Lines are short ASCII.
+; Uses read-file + write-file to append (no native append-file).
+
+(define *plog-path* "/tmp/aura-pets-debug.log")
+(define *plog-on* #t)
+(define *plog-seq* 0)
+(define *plog-last-flush* 0)
+; Keep last lines in memory so crash mid-session still has something
+; if we can flush in a catch path.
+(define *plog-ring* '())
+(define *plog-ring-max* 80)
+
+(define (plog-empty)
+  (substring "x" 0 0))
+
+(define (plog-set-path! path)
+  (set! *plog-path* path)
+  #t)
+
+(define (plog-enable! on?)
+  (set! *plog-on* on?)
+  #t)
+
+(define (plog-path) *plog-path*)
+
+(define (plog-ring-push! line)
+  (set! *plog-ring* (cons line *plog-ring*))
+  (if (> (length *plog-ring*) *plog-ring-max*)
+      (set! *plog-ring*
+        (let loop ((xs *plog-ring*) (i 0) (acc '()))
+          (if (or (null? xs) (>= i *plog-ring-max*))
+              (reverse acc)
+            (loop (cdr xs) (+ i 1) (cons (car xs) acc)))))
+    #t)
+  #t)
+
+; Join ring (oldest first) with newlines.
+(define (plog-ring-text)
+  (let loop ((xs (reverse *plog-ring*)) (s (plog-empty)))
+    (if (null? xs)
+        s
+      (loop (cdr xs)
+            (if (= (string-length s) 0)
+                (car xs)
+              (string-append s "\n" (car xs)))))))
+
+(define (plog-read-existing)
+  (try
+    (if (file-exists? *plog-path*)
+        (read-file *plog-path*)
+      (plog-empty))
+    (catch (e) (plog-empty))))
+
+(define (plog-write-all! body)
+  (try
+    (write-file *plog-path* body)
+    (catch (e) #f)))
+
+(define (plog-flush!)
+  (if (not *plog-on*)
+      #f
+    (let* ((prev (plog-read-existing))
+           (chunk (plog-ring-text))
+           (body (if (= (string-length prev) 0)
+                     (string-append chunk "\n")
+                   (string-append prev
+                     (if (string=? (substring prev
+                            (- (string-length prev) 1)
+                            (string-length prev))
+                           "\n")
+                         (plog-empty)
+                       "\n")
+                     chunk "\n"))))
+      (plog-write-all! body)
+      (set! *plog-ring* '())
+      (set! *plog-last-flush* *plog-seq*)
+      #t)))
+
+; Log one line. Fields should be short ASCII (no spaces ideally, use |).
+(define (plog tag detail)
+  (if (not *plog-on*)
+      #f
+    (begin
+      (set! *plog-seq* (+ *plog-seq* 1))
+      (let ((line (string-append
+                    (number->string *plog-seq*)
+                    " [" tag "] " detail)))
+        (plog-ring-push! line)
+        ; flush every 8 events so a hard crash loses little
+        (if (= (modulo *plog-seq* 8) 0)
+            (plog-flush!)
+          #t)
+        #t))))
+
+(define (plog-event frame act extra)
+  (plog "evt"
+        (string-append "f=" (number->string frame)
+                       " act=" (if (string? act) act
+                                 (if act "true" "false"))
+                       " " extra)))
+
+(define (plog-quit reason frame pet-info)
+  (plog "QUIT"
+        (string-append "reason=" reason
+                       " f=" (number->string frame)
+                       " " pet-info))
+  (plog-flush!)
+  #t)
+
+(define (plog-start! path)
+  (set! *plog-path* path)
+  (set! *plog-seq* 0)
+  (set! *plog-ring* '())
+  (set! *plog-on* #t)
+  ; session banner (overwrite file for a fresh session)
+  (try
+    (write-file *plog-path*
+      (string-append "=== aura-pets session start path=" path " ===\n"))
+    (catch (e) #f))
+  (plog "start" "play-session")
+  (plog-flush!)
+  #t)
+
+(define (plog-end! reason)
+  (plog "end" reason)
+  (plog-flush!)
+  #t)

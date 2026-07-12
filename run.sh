@@ -29,7 +29,9 @@ EXAMPLE="examples/cat-demo.aura"
 FRAMES=10
 MODE="auto"
 
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+# pet-log before scene so play-entry can plog-*
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -41,13 +43,18 @@ Aura Pets
   ./run.sh play            interactive
   ./run.sh --demo [N]      headless frames
   ./run.sh smoke
+  ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
-Play: arrows/wasd move | 1 eat 2 play 3 sleep | e grow | q bye
-      type: teach feed Hi   |  brain
+Play: arrows move | 1 eat 2 play 3 sleep | e grow | q bye
+      type: teach feed Hi | brain
+
+Debug: every play session writes $LOG_FILE
+  tail -f /tmp/aura-pets-debug.log
 USAGE
       exit 0
       ;;
     play|--interactive|--play) MODE="play"; shift ;;
+    --log) LOG_FILE="$2"; shift 2 || shift ;;
     --demo)
       MODE="demo"
       if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then FRAMES="$2"; shift 2; else shift; fi
@@ -64,9 +71,12 @@ if [ "$MODE" = "auto" ]; then
   if [ -t 1 ] && [ -e /dev/tty ]; then MODE="play"; else MODE="demo"; fi
 fi
 
+export AURA_PETS_LOG="$LOG_FILE"
+
 case "$MODE" in
   play)
-    EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (play-entry))"
+    # plog-start! uses fixed default; override path before entry
+    EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (plog-set-path! \"$LOG_FILE\") (play-entry))"
     export AURA_TUI_LIVE=1
     ;;
   smoke)
@@ -79,7 +89,17 @@ esac
 
 echo "aura=$AURA_BIN mode=$MODE" >&2
 if [ "$MODE" = "play" ]; then
-  echo "$EXPR" | "$AURA_BIN"
+  echo "log=$LOG_FILE  (tail -f \$log after/during play)" >&2
+  # Capture aura stderr to log as well (crashes / type errors)
+  { echo "$EXPR" | "$AURA_BIN" 2>>"$LOG_FILE"; } 
+  rc=$?
+  echo "exit_code=$rc" >>"$LOG_FILE"
+  echo "session ended rc=$rc  log=$LOG_FILE" >&2
+  if [ -f "$LOG_FILE" ]; then
+    echo "---- last log lines ----" >&2
+    tail -n 25 "$LOG_FILE" >&2 || true
+  fi
+  exit "$rc"
 else
   echo "$EXPR" | "$AURA_BIN" 2>&1
 fi
