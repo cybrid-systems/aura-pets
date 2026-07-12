@@ -91,13 +91,7 @@
 
 ; Remove NPC by name from world list (fainted).
 (define (combat-remove-npc! name)
-  (set! *world-npcs*
-    (let loop ((xs *world-npcs*) (acc '()))
-      (if (null? xs)
-          (reverse acc)
-        (if (string=? (car (car xs)) name)
-            (loop (cdr xs) acc)
-          (loop (cdr xs) (cons (car xs) acc))))))
+  (world-remove-npc-name! name)
   #t)
 
 ; Spend 1 energy if possible; returns updated pet.

@@ -55,6 +55,19 @@
   (set! *world-props* (append *world-props* (list pr)))
   #t)
 
+; Remove first NPC matching name (fainted in combat).
+(define (world-remove-npc-name! name)
+  (set! *world-npcs*
+    (let loop ((xs *world-npcs*) (acc '()))
+      (if (null? xs)
+          (reverse acc)
+        (if (string=? (car (car xs)) name)
+            (loop (cdr xs) acc)
+          (loop (cdr xs) (cons (car xs) acc))))))
+  #t)
+
+(define (world-npcs) *world-npcs*)
+
 ; Unpack packed rgb → "r,g,b" for save / AST source.
 (define (world-rgb-str packed)
   (let* ((r (quotient packed 65536))
