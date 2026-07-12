@@ -98,17 +98,37 @@
 
 (define (battle-wpn-life wpn)
   (cond
-    ((string=? wpn "beam") 18)
-    ((string=? wpn "bomb") 10)
+    ((string=? wpn "beam") 16)
+    ((string=? wpn "bomb") 12)
     ((string=? wpn "fire") 14)
-    (else 22)))
+    ((string=? wpn "double") 18)
+    (else 16)))
 
 (define (battle-wpn-spd wpn)
   (cond
     ((string=? wpn "beam") 2)
     ((string=? wpn "bomb") 1)
-    ((string=? wpn "fire") 2)
+    ((string=? wpn "fire") 1)
     (else 1)))
+
+; Muzzle flash + spark FX when pet fires.
+(define (battle-muzzle-fx! x y dx dy wpn)
+  (let ((hx (+ x dx))
+        (hy (+ y dy))
+        (fg (cond
+              ((string=? wpn "fire") (rgb 255 160 40))
+              ((string=? wpn "beam") (rgb 100 230 255))
+              ((string=? wpn "bomb") (rgb 255 230 80))
+              (else (rgb 255 255 200)))))
+    (fx-spawn! hx hy
+               (cond
+                 ((string=? wpn "fire") "*")
+                 ((string=? wpn "beam") "=")
+                 ((string=? wpn "bomb") "O")
+                 (else "+"))
+               5)
+    (fx-spawn! (+ hx dx) (+ hy dy) "." 3)
+    #t))
 
 ; ── Pretty HP bar: [████░░░░] green/yellow/red ──
 (define (hp-bar-fill n filled)
@@ -272,8 +292,9 @@
             (life (battle-wpn-life wpn))
             (sx (+ cx 5))
             (sy (+ cy 2)))
-       (set! *pet-fire-cd* (if (string=? wpn "beam") 4 8))
+       (set! *pet-fire-cd* (if (string=? wpn "beam") 6 10))
        (anim-start! "fight" 8)
+       (battle-muzzle-fx! sx sy dx dy wpn)
        (bullet-spawn! sx sy dx dy 0 dmg life wpn)
        (if (string=? wpn "double")
            (bullet-spawn! sx (+ sy 1) dx dy 0 dmg life wpn)
@@ -346,10 +367,15 @@
                     (if (<= nh 0)
                         (begin
                           (combat-npc-hp-set! name 0)
-                          (npc-dying-set! name 10)
-                          (fx-spawn! nx ny "X.X" 14)
-                          (fx-spawn! (+ nx 1) (- ny 1) "KO" 12))
-                      (combat-npc-hp-set! name nh))
+                          (npc-dying-set! name 12)
+                          (fx-spawn! nx ny "#*#" 16)
+                          (fx-spawn! (+ nx 1) (- ny 1) "BOOM" 14)
+                          (fx-spawn! nx (+ ny 1) "***" 10)
+                          (fx-spawn! (+ nx 2) ny ".." 8))
+                      (begin
+                        (combat-npc-hp-set! name nh)
+                        ; small sparkle on hit
+                        (fx-spawn! (+ nx 2) ny "*" 5)))
                     #t))
               (loop (cdr xs) #f))))))))
 
@@ -400,28 +426,95 @@
                (loop (cdr xs) (cons nb acc)))))))))
   #t)
 
+; Directional head glyph for cool projectiles.
+(define (bullet-head-ch dx dy wpn team)
+  (if (= team 1)
+      "v"  ; enemy blob
+    (cond
+      ((string=? wpn "beam")
+       (if (= dx 0) "|" "="))
+      ((string=? wpn "bomb") "@")
+      ((string=? wpn "fire") "*")
+      ((string=? wpn "double") "+")
+      ; shot: arrow-ish by direction
+      ((> dx 0) ">")
+      ((< dx 0) "<")
+      ((< dy 0) "^")
+      (else "v"))))
+
+(define (bullet-head-fg wpn team)
+  (if (= team 1)
+      (rgb 255 90 110)
+    (cond
+      ((string=? wpn "fire") (rgb 255 120 20))
+      ((string=? wpn "beam") (rgb 80 240 255))
+      ((string=? wpn "bomb") (rgb 255 220 60))
+      ((string=? wpn "double") (rgb 200 255 120))
+      (else (rgb 255 255 160)))))
+
+(define (bullet-trail-fg wpn team)
+  (if (= team 1)
+      (rgb 180 40 60)
+    (cond
+      ((string=? wpn "fire") (rgb 255 60 0))
+      ((string=? wpn "beam") (rgb 40 120 200))
+      ((string=? wpn "bomb") (rgb 180 100 20))
+      (else (rgb 180 180 80)))))
+
+; Multi-cell projectile: head + trail + optional glow (tank-battle juice).
+(define (battle-draw-one-bullet! b)
+  (let* ((x (car b))
+         (y (car (cdr b)))
+         (dx (car (cdr (cdr b))))
+         (dy (car (cdr (cdr (cdr b)))))
+         (team (car (cdr (cdr (cdr (cdr b))))))
+         (life (car (cdr (cdr (cdr (cdr (cdr (cdr b))))))))
+         (wpn (car (cdr (cdr (cdr (cdr (cdr (cdr (cdr b)))))))))
+         (hch (bullet-head-ch dx dy wpn team))
+         (hfg (bullet-head-fg wpn team))
+         (tfg (bullet-trail-fg wpn team))
+         ; trail sits one step behind velocity
+         (tx (- x (if (= dx 0) 0 (if (> dx 0) 1 -1))))
+         (ty (- y (if (= dy 0) 0 (if (> dy 0) 1 -1))))
+         (pulse (= (modulo life 2) 0)))
+    ; trail
+    (draw-text tx ty
+               (cond
+                 ((string=? wpn "beam") (if (= dx 0) ":" "-"))
+                 ((string=? wpn "fire") ".")
+                 ((string=? wpn "bomb") "o")
+                 (else "."))
+               tfg 0)
+    ; secondary longer beam trail
+    (if (string=? wpn "beam")
+        (draw-text (- tx (if (= dx 0) 0 (if (> dx 0) 1 -1)))
+                   (- ty (if (= dy 0) 0 (if (> dy 0) 1 -1)))
+                   (if (= dx 0) "." "-")
+                   (rgb 20 60 120) 0)
+      #t)
+    ; fire outer glow
+    (if (and (string=? wpn "fire") pulse)
+        (begin
+          (draw-text (+ x 1) y "." (rgb 255 200 80) 0)
+          (draw-text x (+ y 1) "." (rgb 255 80 0) 0))
+      #t)
+    ; bomb body ring
+    (if (string=? wpn "bomb")
+        (begin
+          (draw-text (+ x 1) y "o" (rgb 255 180 40) 0)
+          (draw-text x y hch hfg 0))
+      (draw-text x y hch hfg 0))
+    ; bright core pulse
+    (if (and pulse (= team 0) (not (string=? wpn "bomb")))
+        (draw-text x y hch (rgb 255 255 255) 0)
+      #t)
+    #t))
+
 (define (battle-draw-bullets!)
   (let loop ((xs *bullets*))
     (if (null? xs) #t
-      (let* ((b (car xs))
-             (x (car b))
-             (y (car (cdr b)))
-             (team (car (cdr (cdr (cdr (cdr b))))))
-             (wpn (car (cdr (cdr (cdr (cdr (cdr (cdr (cdr b)))))))))
-             (ch (cond
-                   ((string=? wpn "beam") "=")
-                   ((string=? wpn "bomb") "O")
-                   ((string=? wpn "fire") "*")
-                   ((string=? wpn "double") "+")
-                   (else "o")))
-             (fg (if (= team 0)
-                     (cond
-                       ((string=? wpn "fire") (rgb 255 140 40))
-                       ((string=? wpn "beam") (rgb 120 220 255))
-                       ((string=? wpn "bomb") (rgb 255 220 80))
-                       (else (rgb 255 255 180)))
-                   (rgb 255 100 120))))
-        (draw-text x y ch fg 0)
+      (begin
+        (battle-draw-one-bullet! (car xs))
         (loop (cdr xs))))))
 
 ; Full battle tick once per play frame.

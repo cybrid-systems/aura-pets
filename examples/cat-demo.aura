@@ -242,55 +242,48 @@
   (game-on-move!)
   (cons (clamp-x (+ cat-x dx)) (clamp-y (+ cat-y dy))))
 
-; Facing + double-tap dash + short momentum for smoother feel.
-(define *walk-dx* 0)
-(define *walk-dy* 0)
-(define *walk-left* 0)   ; remaining auto-steps
-(define *walk-cd* 0)     ; frames until next momentum step
+; Ergonomic move: step cooldown + mild double-tap dash (no long coast).
+; Human feel ≈ deliberate grid steps, not ice-skating.
+(define *move-cd* 0)       ; frames until next step allowed
+(define *move-period* 3)   ; min frames between steps (~4 steps/s at 60fps wait)
+(define *dash-period* 5)   ; longer recovery after dash
 
 (define (nav-apply! dir dx dy)
   (battle-set-face! dir)
-  (let* ((same (and (string=? dir *dash-dir*)
-                    (< (- *p-frame* *dash-frame*) 12)))
-         (step (if same 4 1))
-         (xy (move-by *p-x* *p-y* (* dx step) (* dy step))))
-    (set! *dash-dir* dir)
-    (set! *dash-frame* *p-frame*)
-    (set! *p-x* (car xy))
-    (set! *p-y* (cdr xy))
-    ; momentum: keep gliding 2 steps (or 1 after dash) on a short cadence
-    (set! *walk-dx* dx)
-    (set! *walk-dy* dy)
-    (set! *walk-left* (if same 1 2))
-    (set! *walk-cd* 1)
-    (if same
-        (begin
-          (game-set-speech! "Dash!")
-          (anim-start! "play" 6))
-      #t)
-    #t))
-
-; Soft coasting between key events (OS key-repeat + momentum).
-(define (walk-momentum-tick!)
-  (if (and (> *walk-left* 0) (<= *walk-cd* 0))
-      (let ((xy (move-by *p-x* *p-y* *walk-dx* *walk-dy*)))
-        (set! *p-x* (car xy))
-        (set! *p-y* (cdr xy))
-        (set! *walk-left* (- *walk-left* 1))
-        (set! *walk-cd* 2)
-        #t)
-    (begin
-      (if (> *walk-cd* 0)
-          (set! *walk-cd* (- *walk-cd* 1))
+  ; Still turning face even during move-cd (aim without sliding).
+  (if (> *move-cd* 0)
+      #t
+    (let* ((same (and (string=? dir *dash-dir*)
+                      (> *dash-frame* 0)
+                      (< (- *p-frame* *dash-frame*) 9)
+                      (> (- *p-frame* *dash-frame*) 1)))
+           ; dash = only +1 extra cell (total 2), not a rocket
+           (step (if same 2 1))
+           (xy (move-by *p-x* *p-y* (* dx step) (* dy step))))
+      (set! *dash-dir* dir)
+      (set! *dash-frame* *p-frame*)
+      (set! *p-x* (car xy))
+      (set! *p-y* (cdr xy))
+      (set! *move-cd* (if same *dash-period* *move-period*))
+      (if same
+          (begin
+            (game-set-speech! "Dash!")
+            (anim-start! "play" 5))
         #t)
       #t)))
 
-; Drain all pending keys quickly so movement is not limited to 1 event / 80ms.
+(define (walk-momentum-tick!)
+  ; only decays move cooldown (no free auto-glide)
+  (if (> *move-cd* 0)
+      (set! *move-cd* (- *move-cd* 1))
+    #t)
+  #t)
+
+; One wait + few drained events — OS key-repeat should not spam 8 steps/frame.
 (define (play-drain-input!)
-  ; one short wait so we do not spin CPU when idle
-  (play-handle-event! (tui:read-event 12))
+  (play-handle-event! (tui:read-event 28))
   (let loop ((n 0))
-    (if (>= n 8)
+    (if (>= n 2)
         #t
       (let ((e (tui:read-event 0)))
         (if e
