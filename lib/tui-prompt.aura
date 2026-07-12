@@ -137,7 +137,23 @@
       0
     (prompt-cp-start s (- c 1))))
 
-; Number of codepoints in s (display columns, 1 cell each — engine limit).
+; Display width of the codepoint at byte index i (CJK/emoji ≈ 2, else 1).
+; Box-drawing (U+2500–257F = E2 94/95 …) stays width 1.
+(define (prompt-disp-width-at s i)
+  (let ((len (prompt-cp-len s i)))
+    (cond
+      ((<= len 1) 1)
+      ((= len 2) 1)
+      ((= len 3)
+       (let ((b0 (prompt-byte-at s i)))
+         (if (and (= b0 226) ; E2 …
+                  (let ((b1 (prompt-byte-at s (+ i 1))))
+                    (or (= b1 148) (= b1 149)))) ; 94 / 95 box drawing
+             1
+           2)))
+      (else 2))))
+
+; Number of display columns (not raw codepoints) — for cursor / layout.
 (define (prompt-cp-count s)
   (let ((n (string-length s)))
     (let loop ((i 0) (c 0))
@@ -146,7 +162,8 @@
         (let ((len (prompt-cp-len s i)))
           (if (<= len 0)
               c
-            (loop (+ i len) (+ c 1))))))))
+            (loop (+ i len)
+                  (+ c (prompt-disp-width-at s i)))))))))
 
 (define (prompt-clamp-cursor!)
   (let ((n (string-length *prompt-buf*)))
@@ -418,7 +435,8 @@
              "edit")
             (else #f)))))))
 
-; Draw string by full UTF-8 codepoints (one cell each). Keeps fg/bg on 中.
+; Draw string by full UTF-8 codepoints. CJK advances 2 columns so the next
+; glyph does not land on the wide-tail cell (black-on-black wipe).
 ; Returns next column after the last glyph.
 (define (prompt-put-str! col row str fg bg attr)
   (let ((n (string-length str)))
@@ -428,9 +446,9 @@
         (let ((len (prompt-cp-len str i)))
           (if (<= len 0)
               x
-            (begin
+            (let ((w (prompt-disp-width-at str i)))
               (tui:cell x row (substring str i (+ i len)) fg bg attr)
-              (loop (+ i len) (+ x 1)))))))))
+              (loop (+ i len) (+ x w)))))))))
 
 ; Public: colored UTF-8 text anywhere (fixes canvas draw-text byte-splitting).
 (define (draw-utf8! col row str fg bg)
@@ -458,7 +476,7 @@
         (tui:cell (+ col i) row ch fg bg 0)
         (loop (+ i 1))))))
 
-; Clip log / input so they fit inside the box (by codepoint columns).
+; Clip log / input so they fit inside the box (by display columns).
 (define (prompt-clip-cols str max-cols)
   (if (<= max-cols 0)
       (prompt-empty)
@@ -466,10 +484,11 @@
       (let loop ((i 0) (cols 0))
         (if (or (>= i n) (>= cols max-cols))
             (if (= i 0) (prompt-empty) (substring str 0 i))
-          (let ((len (prompt-cp-len str i)))
-            (if (or (<= len 0) (> (+ cols 1) max-cols))
+          (let* ((len (prompt-cp-len str i))
+                 (w (if (<= len 0) 0 (prompt-disp-width-at str i))))
+            (if (or (<= len 0) (> (+ cols w) max-cols))
                 (if (= i 0) (prompt-empty) (substring str 0 i))
-              (loop (+ i len) (+ cols 1)))))))))
+              (loop (+ i len) (+ cols w)))))))))
 
 ; Grok Build–style bordered input box (3 rows at *prompt-y*..+2).
 (define (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
