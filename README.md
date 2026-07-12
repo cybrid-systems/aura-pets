@@ -57,11 +57,27 @@ hi!  1=feed  2=play  3=sleep  e=evolve  type help
 | 1.1 dialogue + soft fail states | next |
 | 1.2 soul persist (save/load) | later |
 
+## Ownership (hard split)
+
+| Layer | Repo | Owns |
+|-------|------|------|
+| **Business / game** | **aura-pets** | pet lifecycle, vitals, care, evolution, scenes, dialogue, saves, demos |
+| **Render / TUI / runtime** | **aura** (`aura-grok`) | `tui:*`, termios/raw input, CSI keys, half-block pixels, truecolor, `lib/std/tui/*`, engine string/load bugs that break TUI |
+
+**Rule:** “猫饿了 / 喂食 / 进化” → aura-pets. “Delete 变空格 / 没光标 / present 不画 / 按键读不到” → **aura**. Game code may call Aura APIs; do not reimplement terminal protocols or keep permanent engine workarounds here.
+
+| Path | Belongs? |
+|------|----------|
+| `lib/pet-lifecycle.aura`, care loop, demos | aura-pets ✓ |
+| `lib/pixel-cat.aura` (game art on `tui:pixel`) | aura-pets ✓ |
+| `lib/tui-prompt.aura` (generic line editor) | **borrowed** → graduate to `lib/std/tui/prompt` in aura |
+| Mac DEL / live present / `/dev/tty` / CSI | aura ✓ |
+
 ## Aura load notes
 
 1. Prefer `(require "std/...")` over nested stdlib `(load)`.  
 2. Do not call imported procs at **top-level init** inside a loaded file (e.g. `(define C (rgb …))`) — use literals or call inside procedures.  
-3. `tui:cell` paints **only the first codepoint** — multi-char lines need `draw-text` / `prompt-put-str!`.
+3. `tui:cell` first-codepoint-only is an **aura** surface quirk; use `draw-text` until multi-char cell is fixed upstream.
 
 ## License
 
