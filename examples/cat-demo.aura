@@ -1,14 +1,9 @@
-; examples/cat-demo.aura — R1 Kids MVP play scene
+; examples/cat-demo.aura — R2: move cat + action anim + eDSL teach
 ;
-; Layout (H=18):
-;   0-2  name / vitals / big key legend
-;   3-13 room + pixel cat
-;   14   face + speech bubble
-;   15   (reserved)
-;   16-17 prompt log + input
+; Keys (empty prompt): arrows/wasd move, 1/2/3 care, e grow, q bye
+; Type: teach feed Hello   |   brain   |   help
 ;
-; Business: pet-lifecycle + pet-game. Render: tui:* / sprite / canvas / pixel-cat.
-; run.sh loads lifecycle, pixel-cat, this file, then tui-prompt (order matters).
+; Load: lifecycle, edsl, anim, pet-game, pixel-cat, this, prompt(last)
 
 (require "std/tui/sprite" all:)
 (require "std/tui/canvas" all:)
@@ -25,6 +20,8 @@
 (define SCENE-Y0 3)
 (define SCENE-Y1 14)
 (define PROMPT-Y 16)
+(define CAT-W 12)
+(define CAT-H 6)
 
 (define BAR0 "..........")
 (define BAR1 "=.........")
@@ -52,12 +49,21 @@
     ((= n 9) BAR9)
     (else BAR10)))
 
+(define (clamp-x x)
+  (if (< x 1) 1
+    (if (> x (- W CAT-W 1)) (- W CAT-W 1) x)))
+
+(define (clamp-y y)
+  (if (< y SCENE-Y0) SCENE-Y0
+    (if (> y (- SCENE-Y1 CAT-H)) (- SCENE-Y1 CAT-H) y)))
+
 (define (draw-hud! pet frame-n)
   (draw-text 1 0 "Mochi" TITLE-CYAN BG)
   (draw-text 8 0
              (string-append (game-mood-kid pet)
-                            "  love" (game-love-stars)
-                            "  v" (number->string (pet-version pet)))
+                            " love" (game-love-stars)
+                            " v" (number->string (pet-version pet))
+                            " " (anim-kind))
              MATRIX-GREEN BG)
   (draw-text 1 1 "food[" BAR-FG BG)
   (draw-text 6 1 (bar (pet-hunger pet)) BAR-FG BG)
@@ -66,38 +72,56 @@
              (if (< (pet-mood pet) 5) BAR-LO BAR-FG) BG)
   (draw-text 34 1 "] zest[" BAR-FG BG)
   (draw-text 41 1 (bar (pet-energy pet)) BAR-FG BG)
-  ; big kid legend
-  (draw-text 1 2 "[1]eat  [2]play  [3]sleep  [e]grow  [q]bye" HUD-DIM BG)
+  (draw-text 1 2 "arrows/wasd move  [1]eat [2]play [3]sleep [e]grow [q]bye" HUD-DIM BG)
   #t)
+
+(define (pose-face pose blink mood)
+  (cond
+    ((string=? pose "eat") "O_O")
+    ((string=? pose "play") "^o^")
+    ((string=? pose "sleep") "-_-")
+    ((string=? pose "evolve") "*_*")
+    (else (if blink "-.-"
+            (if (string=? mood "happy") "^_^"
+              (if (string=? mood "ok") "o.o" "u.u"))))))
 
 (define (draw-speech! pet cat-x cat-y frame-n)
-  (draw-text cat-x (+ cat-y 5)
-             (string-append "(" (pet-face pet (= (modulo frame-n 6) 5)) ")")
-             NEON-PINK BG)
-  (draw-text 1 14
-             (string-append "\" " (game-speech) " \"")
-             SPEECH-FG BG)
-  #t)
+  (let ((pose (anim-kind))
+        (blink (and (string=? (anim-kind) "idle") (= (modulo frame-n 6) 5))))
+    (draw-text cat-x (+ cat-y 5)
+               (string-append "(" (pose-face pose blink (game-mood-kid pet)) ")")
+               NEON-PINK BG)
+    (draw-text 1 14
+               (string-append "\" " (game-speech) " \"")
+               SPEECH-FG BG)
+    #t))
 
 (define (draw-scene! pet frame-n cat-x cat-y)
-  (tui:clear BG BG)
-  (draw-room! W H SCENE-Y0 SCENE-Y1)
-  (draw-hud! pet frame-n)
-  (draw-pixel-cat! cat-x cat-y
-                   (= (modulo frame-n 6) 5)
-                   (game-mood-kid pet)
-                   (pet-version pet))
-  (draw-speech! pet cat-x cat-y frame-n)
-  (prompt-draw! HUD-DIM IN-FG BG 0 16777215)
-  (tui:present)
-  #t)
+  (let* ((pose (anim-kind))
+         (phase (anim-phase))
+         (draw-y (+ cat-y (anim-hop)))
+         (blink (and (string=? pose "idle") (= (modulo frame-n 6) 5))))
+    (tui:clear BG BG)
+    (draw-room! W H SCENE-Y0 SCENE-Y1)
+    (draw-hud! pet frame-n)
+    (draw-pixel-cat! cat-x draw-y blink (game-mood-kid pet)
+                     (pet-version pet) pose phase)
+    (draw-speech! pet cat-x cat-y frame-n)
+    (prompt-draw! HUD-DIM IN-FG BG 0 16777215)
+    (tui:present)
+    #t))
 
 (define (handle-game pet cmd)
   (let ((r (game-do pet cmd)))
     (prompt-set-log! (game-speech))
     r))
 
-; Headless scripted demo for CI: ./run.sh --demo N
+(define (move-cat cat-x cat-y dx dy)
+  (game-on-move!)
+  (prompt-set-log! (game-speech))
+  (cons (clamp-x (+ cat-x dx)) (clamp-y (+ cat-y dy))))
+
+; Headless demo: scripted care + anim frames + move
 (define (cat-demo-anim n)
   (tui:init "aura-pets" W H)
   (tui:hide-cursor)
@@ -110,42 +134,36 @@
       (begin
         (define stepped
           (cond
-            ((= i 1)
-             (cdr (handle-game current "1")))
-            ((= i 2)
-             (cdr (handle-game current "2")))
-            ((= i 3)
-             (cdr (handle-game current "3")))
-            ((= i 4)
-             (cdr (handle-game current "1")))
-            ((= i 5)
-             (cdr (handle-game current "e")))
-            ((and (> i 0) (= (modulo i 6) 0))
-             (game-soft-tick current))
+            ((= i 1) (cdr (handle-game current "1")))
+            ((= i 3) (cdr (handle-game current "2")))
+            ((= i 5) (cdr (handle-game current "3")))
+            ((= i 7) (cdr (handle-game current "1")))
+            ((= i 8) (cdr (handle-game current "e")))
             (else current)))
+        (anim-tick!)
         (pet-render-sync)
-        (draw-scene! stepped i cat-x cat-y)
-        (display "\n=== Frame ")
-        (display (number->string i))
-        (display " v")
-        (display (number->string (pet-version stepped)))
-        (display " love=")
-        (display (number->string (game-love)))
-        (display " ===\n")
-        (display (tui:frame-ansi))
-        (newline)
-        (loop (+ i 1) stepped
-              (modulo (+ cat-x 1) (- W 14))
-              cat-y)))))
+        (let ((nx (if (= i 2) (clamp-x (+ cat-x 3)) cat-x)))
+          (draw-scene! stepped i nx cat-y)
+          (display "\n=== Frame ")
+          (display (number->string i))
+          (display " v")
+          (display (number->string (pet-version stepped)))
+          (display " anim=")
+          (display (anim-kind))
+          (display " love=")
+          (display (number->string (game-love)))
+          (display " ===\n")
+          (display (tui:frame-ansi))
+          (newline)
+          (loop (+ i 1) stepped nx cat-y))))))
 
-; Kids play loop — default product entry.
 (define (cat-demo-interactive)
   (tui:init "aura-pets" W H #t)
   (tui:hide-cursor)
   (tui:raw-mode-on)
   (prompt-init! PROMPT-Y)
   (game-reset!)
-  (prompt-set-log! "Press 1 eat / 2 play / 3 sleep. Grow with e when ready!")
+  (prompt-set-log! "Arrows move | 1 2 3 care | e grow | teach feed Hi")
   (define mochi (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
   (let loop ((frame 0) (current mochi) (cat-x 8) (cat-y 5) (running #t)
              (tick-n 0))
@@ -158,21 +176,33 @@
         (tui:shutdown)
         "BYE")
       (begin
+        (anim-tick!)
         (pet-render-sync)
         (draw-scene! current frame cat-x cat-y)
-        (let* ((e (tui:read-event 90))
+        (let* ((e (tui:read-event 80))
                (act (prompt-handle e)))
           (cond
             ((not act)
              (let* ((tn (+ tick-n 1))
-                    (do-tick (= (modulo tn 40) 0))
-                    (next (if do-tick (game-soft-tick current) current)))
-               (loop (+ frame 1) next
-                     (modulo (+ cat-x (if (= (modulo frame 10) 0) 1 0)) (- W 14))
-                     cat-y #t tn)))
+                    (next (if (= (modulo tn 45) 0)
+                              (game-soft-tick current)
+                            current)))
+               (loop (+ frame 1) next cat-x cat-y #t tn)))
             ((string=? act "quit")
              (handle-game current "q")
              (loop frame current cat-x cat-y #f tick-n))
+            ((string=? act "nav-left")
+             (let ((xy (move-cat cat-x cat-y -1 0)))
+               (loop (+ frame 1) current (car xy) (cdr xy) #t tick-n)))
+            ((string=? act "nav-right")
+             (let ((xy (move-cat cat-x cat-y 1 0)))
+               (loop (+ frame 1) current (car xy) (cdr xy) #t tick-n)))
+            ((string=? act "nav-up")
+             (let ((xy (move-cat cat-x cat-y 0 -1)))
+               (loop (+ frame 1) current (car xy) (cdr xy) #t tick-n)))
+            ((string=? act "nav-down")
+             (let ((xy (move-cat cat-x cat-y 0 1)))
+               (loop (+ frame 1) current (car xy) (cdr xy) #t tick-n)))
             ((string=? act "hot")
              (let ((r (handle-game current (prompt-hot))))
                (loop (+ frame 1) (cdr r) cat-x cat-y (car r) tick-n)))
@@ -185,6 +215,5 @@
             (else
              (loop (+ frame 1) current cat-x cat-y #t tick-n))))))))
 
-; Alias for product naming
 (define (play-entry)
   (cat-demo-interactive))

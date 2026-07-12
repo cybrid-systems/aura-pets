@@ -1,11 +1,7 @@
 #!/bin/bash
-# run.sh — aura-pets entry (kids product + CI demos).
-#
-# Business: lib/pet-*.aura + examples/*
-# Render: Aura tui:* + lib/std/tui/*  (engine bugs → fix in aura)
+# run.sh — aura-pets (kids play + CI)
 
 set -e
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -21,38 +17,33 @@ elif [ -x "$AURA_HOME/build/aura" ]; then
   AURA_BIN="$AURA_HOME/build/aura"
   AURA_STDLIB_DIR="$AURA_HOME/lib/std"
 else
-  echo "FATAL: no aura binary. Build one:" >&2
-  echo "  cd $AURA_GROK_HOME && cmake -B build && cmake --build build --target aura -j" >&2
+  echo "FATAL: no aura binary." >&2
   exit 1
 fi
 
-export AURA_STDLIB_DIR
-export AURA_BIN
+export AURA_STDLIB_DIR AURA_BIN
 LIB_PARENT="$(cd "$(dirname "$AURA_STDLIB_DIR")" && pwd)"
 export AURA_PATH="${LIB_PARENT}${AURA_PATH:+:$AURA_PATH}"
 
 EXAMPLE="examples/cat-demo.aura"
-FRAMES=8
-MODE="auto"   # auto | play | demo | smoke
+FRAMES=10
+MODE="auto"
 
-# lifecycle + game + pixel, then example (require sprite), then prompt last
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --help|-h)
       cat <<USAGE
-Aura Pets — terminal pet for kids
+Aura Pets
 
-Usage:
-  ./run.sh                 play (interactive if TTY, else short demo)
-  ./run.sh play            force interactive play
-  ./run.sh --demo [N]      headless N frames (default 8) for CI / gifs
-  ./run.sh --frames N      same as --demo N
-  ./run.sh smoke           vitals + evolve smoke
-  ./run.sh --interactive   alias for play
+  ./run.sh                 play on TTY, else demo
+  ./run.sh play            interactive
+  ./run.sh --demo [N]      headless frames
+  ./run.sh smoke
 
-Keys in play:  1 eat  2 play  3 sleep  e grow  q bye
+Play: arrows/wasd move | 1 eat 2 play 3 sleep | e grow | q bye
+      type: teach feed Hi   |  brain
 USAGE
       exit 0
       ;;
@@ -65,21 +56,12 @@ USAGE
     --loop) MODE="demo"; FRAMES=99999; shift ;;
     smoke) EXAMPLE="examples/smoke.aura"; MODE="smoke"; shift ;;
     --example) EXAMPLE="$2"; shift 2 || shift ;;
-    *) echo "Unknown arg: $1 (try --help)" >&2; exit 1 ;;
+    *) echo "Unknown: $1" >&2; exit 1 ;;
   esac
 done
 
 if [ "$MODE" = "auto" ]; then
-  if [ -t 1 ] && [ -e /dev/tty ]; then
-    MODE="play"
-  else
-    MODE="demo"
-  fi
-fi
-
-if [ ! -f "$EXAMPLE" ]; then
-  echo "FATAL: example not found: $EXAMPLE" >&2
-  exit 1
+  if [ -t 1 ] && [ -e /dev/tty ]; then MODE="play"; else MODE="demo"; fi
 fi
 
 case "$MODE" in
@@ -95,15 +77,8 @@ case "$MODE" in
     ;;
 esac
 
-echo "aura=$AURA_BIN" >&2
-echo "stdlib=$AURA_STDLIB_DIR" >&2
-echo "example=$EXAMPLE mode=$MODE" >&2
-
+echo "aura=$AURA_BIN mode=$MODE" >&2
 if [ "$MODE" = "play" ]; then
-  if [ ! -e /dev/tty ]; then
-    echo "FATAL: play mode needs a real terminal (/dev/tty)" >&2
-    exit 1
-  fi
   echo "$EXPR" | "$AURA_BIN"
 else
   echo "$EXPR" | "$AURA_BIN" 2>&1

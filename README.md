@@ -1,63 +1,54 @@
 # Aura Pets
 
-> Terminal virtual pet for kids — feed, play, sleep, grow. Powered by [Aura](https://github.com/cybrid-systems/aura).
+> Terminal pet for kids — **you move the cat**, feed/play/sleep with **animations**, and **teach** it new lines (eDSL mutation).
 
-**Business logic: this repo. Rendering bugs: fix in aura.**  
-Design: [docs/DESIGN.md](docs/DESIGN.md)
+Design: [docs/DESIGN.md](docs/DESIGN.md) · Business here · Render bugs → **aura**
 
-## Play (kids / parents)
+## Play
 
 ```bash
-# once: build Aura
 cd /path/to/aura-grok && cmake -B build && cmake --build build --target aura -j
-
 cd /path/to/aura-pets
-./run.sh              # opens play if you have a real terminal
-./run.sh play         # force interactive
+./run.sh play
 ```
 
-| Key | What happens |
-|-----|----------------|
-| **1** | Eat (food↑, love↑) |
-| **2** | Play (heart↑, love↑) |
-| **3** | Sleep (zest↑, love↑) |
-| **e** | Grow — only when love is high enough |
+| Input | Effect |
+|-------|--------|
+| **arrows / wasd** | Move Mochi |
+| **1** | Eat + eat anim |
+| **2** | Play + hop anim |
+| **3** | Sleep + Zzz anim |
+| **e** | Grow (needs love\*\*\* + happy + full) + sparkle |
 | **q** | Bye |
+| `teach feed Nom!` | **Change brain eDSL online** |
+| `brain` | Show rules |
 
-Pet never “dies” (vitals soft-floor at 1). Grow needs **love\*\*\*** plus happy + full tummy.
-
-## Dev / CI
+## Dev
 
 ```bash
-./run.sh --demo 8     # headless frames
-./run.sh smoke        # short evolve smoke
+./run.sh --demo 10    # scripted care + anim labels
+./run.sh smoke
 ```
+
+## eDSL + Aura mutation (short)
+
+1. **Now:** rules in `lib/pet-edsl.aura`; `teach` rewrites them in memory (and tries `set-code` if available).  
+2. **Next:** `mutate:set-body` / `safe-refactor:replace-fn` + `ast:snapshot` so the pet’s *source AST* evolves safely.  
+3. **Evolve look:** already uses `atomic-swap` bindings.
+
+See DESIGN.md §“eDSL online change”.
 
 ## Layout
 
 ```
-aura-pets/
-├── docs/DESIGN.md           # product + iteration roadmap (R1–R5)
-├── lib/
-│   ├── pet-lifecycle.aura   # records, vitals, atomic-swap evolve
-│   ├── pet-game.aura        # kids session: love, speech, soft rules
-│   ├── pixel-cat.aura       # half-block cat art
-│   └── tui-prompt.aura      # line editor (borrowed; → aura std later)
-├── examples/
-│   ├── cat-demo.aura        # R1 play scene
-│   └── smoke.aura
-└── run.sh
+lib/pet-lifecycle.aura   vitals + evolve (atomic-swap)
+lib/pet-edsl.aura        behavior rules + teach + aura commit hook
+lib/pet-anim.aura        action anim timeline
+lib/pet-game.aura        session / commands
+lib/pixel-cat.aura       poses: idle eat play sleep evolve
+lib/tui-prompt.aura      line edit + nav when empty
+examples/cat-demo.aura   play scene
 ```
-
-## Iterations
-
-| Round | Status |
-|-------|--------|
-| **R1 Kids MVP** | playable care + love + speech + soft evolve |
-| R2 Juice | action animations |
-| R3 Chinese UI | needs aura UTF-8 cell |
-| R4 Save soul | persist |
-| R5 Teach phrase | light code mutation |
 
 ## License
 

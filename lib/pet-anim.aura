@@ -1,0 +1,49 @@
+; lib/pet-anim.aura — action animation state (business timing).
+;
+; After care actions, play a short pose sequence while the pixel layer
+; samples (game-anim) + (game-anim-phase).
+
+(define *anim-kind* "idle")
+(define *anim-t* 0)
+(define *anim-len* 0)
+
+(define (anim-reset!)
+  (set! *anim-kind* "idle")
+  (set! *anim-t* 0)
+  (set! *anim-len* 0)
+  #t)
+
+(define (anim-start! kind frames)
+  (set! *anim-kind* kind)
+  (set! *anim-t* 0)
+  (set! *anim-len* frames)
+  #t)
+
+(define (anim-tick!)
+  (if (string=? *anim-kind* "idle")
+      #f
+    (begin
+      (set! *anim-t* (+ *anim-t* 1))
+      (if (>= *anim-t* *anim-len*)
+          (begin
+            (set! *anim-kind* "idle")
+            (set! *anim-t* 0)
+            (set! *anim-len* 0)
+            #f)
+        #t))))
+
+(define (anim-kind) *anim-kind*)
+(define (anim-t) *anim-t*)
+(define (anim-active?)
+  (not (string=? *anim-kind* "idle")))
+
+(define (anim-phase)
+  (if (or (string=? *anim-kind* "idle") (= *anim-len* 0))
+      0
+    (modulo *anim-t* 4)))
+
+; Vertical hop offset for play / evolve juice.
+(define (anim-hop)
+  (if (or (string=? *anim-kind* "play") (string=? *anim-kind* "evolve"))
+      (if (= (modulo *anim-t* 2) 0) -1 0)
+    0))

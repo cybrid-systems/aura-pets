@@ -1,0 +1,103 @@
+; lib/pet-edsl.aura — pet behavior eDSL (business AST-as-data).
+;
+; The "brain" is a list of rules:
+;   (event speech love-delta)
+; event: "feed" | "play" | "sleep" | "evolve" | "idle" | "move"
+;
+; Online change (kids / parents):
+;   (edsl-teach! "feed" "Nom!")     ; rewrites the rule in place
+;   (edsl-show)                     ; printable source of truth
+;
+; Aura killer path (engine mutation) — see docs/DESIGN.md §eDSL:
+;   snapshot → mutate:set-body / set-code + typecheck → eval-current
+;   or swap-binding! on behavior-path (atomic-swap).
+; This file keeps a pure data eDSL so play works without loading mutate
+; mid-session; edsl-aura-commit! is the optional live-mutation bridge.
+
+(define *edsl-rules*
+  (list
+    (list "feed" "Yum yum! So good!" 1)
+    (list "play" "Wheee! That was fun!" 1)
+    (list "sleep" "Zzz... feeling cozy." 1)
+    (list "evolve" "Sparkle!! New look!" 1)
+    (list "move" "Boing!" 0)
+    (list "idle" "..." 0)))
+
+(define (edsl-empty)
+  (substring "x" 0 0))
+
+(define (edsl-reset!)
+  (set! *edsl-rules*
+    (list
+      (list "feed" "Yum yum! So good!" 1)
+      (list "play" "Wheee! That was fun!" 1)
+      (list "sleep" "Zzz... feeling cozy." 1)
+      (list "evolve" "Sparkle!! New look!" 1)
+      (list "move" "Boing!" 0)
+      (list "idle" "..." 0)))
+  #t)
+
+(define (edsl-rules) *edsl-rules*)
+
+(define (edsl-find event)
+  (let loop ((xs *edsl-rules*))
+    (if (null? xs)
+        #f
+      (if (string=? (car (car xs)) event)
+          (car xs)
+        (loop (cdr xs))))))
+
+(define (edsl-speech event)
+  (let ((r (edsl-find event)))
+    (if r (car (cdr r)) "...")))
+
+(define (edsl-love-delta event)
+  (let ((r (edsl-find event)))
+    (if r (car (cdr (cdr r))) 0)))
+
+; Rewrite or append a rule — this IS the in-process AST mutation of the eDSL.
+(define (edsl-teach! event speech)
+  (let ((love (edsl-love-delta event)))
+    (let loop ((xs *edsl-rules*) (acc '()))
+      (cond
+        ((null? xs)
+         (set! *edsl-rules*
+           (append (reverse acc) (list (list event speech love))))
+         #t)
+        ((string=? (car (car xs)) event)
+         (set! *edsl-rules*
+           (append (reverse acc)
+                   (cons (list event speech love) (cdr xs))))
+         #t)
+        (else (loop (cdr xs) (cons (car xs) acc)))))))
+
+; Human-readable eDSL dump (ASCII, safe for tui:cell/draw-text).
+(define (edsl-show)
+  (let loop ((xs *edsl-rules*) (s "brain:"))
+    (if (null? xs)
+        s
+      (let ((r (car xs)))
+        (loop (cdr xs)
+              (string-append s " [" (car r) "->" (car (cdr r)) "]"))))))
+
+; Serialize rules as Aura source for set-code / mutate pipelines.
+(define (edsl-to-aura-source)
+  (let loop ((xs *edsl-rules*) (s "(define *edsl-rules* (list"))
+    (if (null? xs)
+        (string-append s "))\n")
+      (let ((r (car xs)))
+        (loop (cdr xs)
+              (string-append s
+                " (list \"" (car r) "\" \"" (car (cdr r)) "\" "
+                (number->string (car (cdr (cdr r)))) ")"))))))
+
+; Optional live bridge: append redefinition via set-code if available.
+; Returns "aura" | "local" | "error". Safe no-op when primitives missing.
+(define (edsl-aura-commit!)
+  (let ((src (edsl-to-aura-source)))
+    (try
+      (begin
+        (ast:snapshot "pet-edsl")
+        (set-code (string-append (current-source) "\n;; pet-edsl teach\n" src "\n"))
+        "aura")
+      (catch (e) "local"))))

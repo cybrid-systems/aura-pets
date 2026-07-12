@@ -198,19 +198,32 @@
       (string=? ch "Delete")
       (prompt-u8-3? ch 226 140 166)))
 
-; ← U+2190 = E2 86 90 ; → U+2192 = E2 86 92
+; ← U+2190 E2 86 90 ; → U+2192 E2 86 92 ; ↑ U+2191 E2 86 91 ; ↓ U+2193 E2 86 93
 (define (prompt-is-left? ch)
   (or (= (prompt-ch-code ch) 2)
       (string=? ch "←")
       (prompt-u8-3? ch 226 134 144)
-      (string=? ch "Left")))
+      (string=? ch "Left")
+      (and (= (string-length ch) 1) (string=? ch "a"))))
 
 (define (prompt-is-right? ch)
   (or (= (prompt-ch-code ch) 6)
       (string=? ch "→")
       (prompt-u8-3? ch 226 134 146)
-      (string=? ch "Right")))
+      (string=? ch "Right")
+      (and (= (string-length ch) 1) (string=? ch "d"))))
 
+(define (prompt-is-up? ch)
+  (or (string=? ch "↑")
+      (prompt-u8-3? ch 226 134 145)
+      (string=? ch "Up")
+      (and (= (string-length ch) 1) (string=? ch "w"))))
+
+(define (prompt-is-down? ch)
+  (or (string=? ch "↓")
+      (prompt-u8-3? ch 226 134 147)
+      (string=? ch "Down")
+      (and (= (string-length ch) 1) (string=? ch "s"))))
 ; Home U+21F1 E2 87 B1 ; End U+21F2 E2 87 B2
 (define (prompt-is-home? ch)
   (or (= (prompt-ch-code ch) 1)
@@ -257,6 +270,11 @@
             ((prompt-is-del-fwd? ch)
              (prompt-delete-fwd!)
              "edit")
+            ; Empty line: arrows/wasd navigate the pet (not the caret).
+            ((and empty? (prompt-is-left? ch)) "nav-left")
+            ((and empty? (prompt-is-right? ch)) "nav-right")
+            ((and empty? (prompt-is-up? ch)) "nav-up")
+            ((and empty? (prompt-is-down? ch)) "nav-down")
             ((prompt-is-left? ch)
              (prompt-move! -1)
              "edit")

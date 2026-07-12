@@ -1,22 +1,19 @@
-; lib/pet-game.aura — kids session logic (business only).
+; lib/pet-game.aura — kids session + care commands (uses edsl + anim).
 ;
-; Depends on pet-lifecycle (already loaded). No require of stdlib here.
-; Tracks love + speech + soft evolve gates. Care messages are short ASCII
-; so HUD stays safe under Aura's first-codepoint cell painting.
+; Load order: lifecycle → edsl → anim → this file.
 
 (define *love* 0)
-(define *speech* "Hi! I am Mochi. Press 1 2 3!")
+(define *speech* "Hi! Arrows move me. 1 2 3 care!")
 (define *last-act* "idle")
 (define *care-count* 0)
-
-(define (game-empty)
-  (substring "x" 0 0))
 
 (define (game-reset!)
   (set! *love* 0)
   (set! *care-count* 0)
   (set! *last-act* "idle")
-  (set! *speech* "Hi! I am Mochi. Press 1 2 3!")
+  (set! *speech* "Hi! Arrows move me. 1 2 3 care!")
+  (edsl-reset!)
+  (anim-reset!)
   #t)
 
 (define (game-love) *love*)
@@ -33,7 +30,6 @@
   (if (> *love* 9) (set! *love* 9) #t)
   *love*)
 
-; Soft floor: vitals never below 1 (no "death" for kids).
 (define (game-soft-tick pet)
   (let ((h (pet-hunger pet))
         (m (pet-mood pet))
@@ -46,7 +42,6 @@
           (store-put! (pet-id u) u)
           u)))))
 
-; Ready to grow: cared enough + not sad + not starving.
 (define (game-can-evolve? pet)
   (and (= (pet-version pet) 0)
        (>= *love* 3)
@@ -65,8 +60,48 @@
     (if (>= m 8) "happy"
       (if (>= m 5) "ok" "sad"))))
 
-; Returns (keep-going? . pet). keep-going? #f means quit.
-; Speech + love updated as side effects.
+(define (game-apply-care pet event pet-fn anim-name)
+  (let ((u (pet-fn pet))
+        (delta (edsl-love-delta event)))
+    (set! *care-count* (+ *care-count* 1))
+    (game-add-love! delta)
+    (set! *last-act* event)
+    (set! *speech* (edsl-speech event))
+    (anim-start! anim-name 14)
+    (cons #t u)))
+
+; Parse "teach feed Hello there" → teach feed speech
+(define (game-try-teach! cmd)
+  (let ((n (string-length cmd)))
+    (if (and (>= n 6) (string=? (substring cmd 0 5) "teach")
+             (string=? (substring cmd 5 6) " "))
+        (let* ((rest (substring cmd 6 n))
+               (sp (string-find-space rest)))
+          (if (< sp 0)
+              #f
+            (let ((ev (substring rest 0 sp))
+                  (msg (substring rest (+ sp 1) (string-length rest))))
+              (if (or (= (string-length ev) 0) (= (string-length msg) 0))
+                  #f
+                (begin
+                  (edsl-teach! ev msg)
+                  (set! *speech* (string-append "Learned " ev "!"))
+                  (set! *last-act* "teach")
+                  (edsl-aura-commit!)
+                  #t)))))
+      #f)))
+
+; Minimal space finder (Aura may lack string-index).
+(define (string-find-space s)
+  (let ((n (string-length s)))
+    (let loop ((i 0))
+      (if (>= i n)
+          -1
+        (if (string=? (substring s i (+ i 1)) " ")
+            i
+          (loop (+ i 1)))))))
+
+; Returns (keep-going? . pet)
 (define (game-do pet cmd)
   (cond
     ((or (string=? cmd "quit") (string=? cmd "q") (string=? cmd "exit")
@@ -76,35 +111,28 @@
      (cons #f pet))
 
     ((or (string=? cmd "help") (string=? cmd "?"))
-     (set! *speech* "1=eat  2=play  3=sleep  e=grow  q=bye")
+     (set! *speech* "arrows move  1eat 2play 3sleep  e grow  teach feed Hi")
      (set! *last-act* "help")
+     (cons #t pet))
+
+    ((or (string=? cmd "brain") (string=? cmd "edsl"))
+     (set! *speech* (edsl-show))
+     (set! *last-act* "brain")
+     (cons #t pet))
+
+    ((game-try-teach! cmd)
      (cons #t pet))
 
     ((or (string=? cmd "feed") (string=? cmd "1") (string=? cmd "f")
          (string=? cmd "eat"))
-     (let ((u (pet-feed pet)))
-       (set! *care-count* (+ *care-count* 1))
-       (game-add-love! 1)
-       (set! *last-act* "eat")
-       (set! *speech* "Yum yum! So good!")
-       (cons #t u)))
+     (game-apply-care pet "feed" pet-feed "eat"))
 
     ((or (string=? cmd "play") (string=? cmd "2") (string=? cmd "p"))
-     (let ((u (pet-play pet)))
-       (set! *care-count* (+ *care-count* 1))
-       (game-add-love! 1)
-       (set! *last-act* "play")
-       (set! *speech* "Wheee! That was fun!")
-       (cons #t u)))
+     (game-apply-care pet "play" pet-play "play"))
 
     ((or (string=? cmd "sleep") (string=? cmd "3") (string=? cmd "s")
          (string=? cmd "z"))
-     (let ((u (pet-sleep pet)))
-       (set! *care-count* (+ *care-count* 1))
-       (game-add-love! 1)
-       (set! *last-act* "sleep")
-       (set! *speech* "Zzz... feeling cozy.")
-       (cons #t u)))
+     (game-apply-care pet "sleep" pet-sleep "sleep"))
 
     ((or (string=? cmd "evolve") (string=? cmd "e") (string=? cmd "grow"))
      (if (not (= (pet-version pet) 0))
@@ -115,8 +143,9 @@
        (if (game-can-evolve? pet)
            (let ((u (pet-evolve pet "/tmp/brain-v2" "love")))
              (set! *last-act* "evolve")
-             (set! *speech* "Sparkle!! New look!")
-             (game-add-love! 1)
+             (set! *speech* (edsl-speech "evolve"))
+             (game-add-love! (edsl-love-delta "evolve"))
+             (anim-start! "evolve" 18)
              (cons #t u))
          (begin
            (set! *last-act* "idle")
@@ -127,6 +156,12 @@
            (cons #t pet)))))
 
     (else
-     (set! *speech* "Huh? Try 1 2 3 or help")
+     (set! *speech* "Huh? Try 1 2 3 arrows or teach feed Hi")
      (set! *last-act* "idle")
      (cons #t pet))))
+
+; Movement feedback (no vitals change).
+(define (game-on-move!)
+  (set! *speech* (edsl-speech "move"))
+  (set! *last-act* "move")
+  #t)
