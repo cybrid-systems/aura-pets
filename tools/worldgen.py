@@ -70,6 +70,13 @@ def offline_world(cols: int, rows: int) -> str:
             f"prop:flower|{cols // 4}|{floor_y}",
             f"prop:flower|{cols // 2 + 3}|{floor_y}",
             f"prop:flower|{cols * 3 // 4}|{floor_y}",
+            f"prop:crate|{cols // 5}|{floor_y - 2}",
+            f"prop:crate|{cols * 3 // 5}|{floor_y - 1}",
+            f"prop:wall|{cols // 2}|{floor_y - 3}",
+            f"prop:wall|{cols * 4 // 5}|{floor_y - 2}",
+            f"prop:bush|{cols // 3 + 4}|{floor_y}",
+            f"prop:bush|{cols * 2 // 3 - 3}|{floor_y - 1}",
+            f"prop:rock|{cols // 2 + 8}|{floor_y}",
             "",
         ]
     )
@@ -89,7 +96,8 @@ prop:<kind>|<x>|<y>
 Rules:
 - 3 to 5 npc lines. kind is friend or decor.
 - Name and speech ASCII only, speech max 28 chars, kid-friendly, no violence.
-- 3 to 6 prop lines. kind is tree or flower or rock.
+- 6 to 12 prop lines for cover. kind is tree|flower|rock|crate|wall|bush.
+- Scatter crates/walls/bushes as random cover (tank peek spots), not only decorative.
 - x in [2, COLS-4], y in [4, ROWS-7]. Keep NPCs above the floor band.
 - Colors are 0-255 RGB integers for a soft pleasant palette.
 - Do not invent other line types.
@@ -165,7 +173,7 @@ def sanitize_world(text: str, cols: int, rows: int) -> str:
             lines_out.append(f"npc:{name.strip()}|{x}|{y}|{kind}|{speech}")
             npcs += 1
             continue
-        m = re.match(r"^prop:(tree|flower|rock)\|(\d+)\|(\d+)$", line)
+        m = re.match(r"^prop:(tree|flower|rock|crate|wall|bush)\|(\d+)\|(\d+)$", line)
         if m:
             kind, xs, ys = m.groups()
             x = max(2, min(cols - 3, int(xs)))

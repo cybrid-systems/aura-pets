@@ -139,7 +139,7 @@
     (battle-draw-npc-hud! frame-n)
     (draw-hud! pet frame-n)
     (draw-pixel-cat! cat-x draw-y blink (game-mood-kid pet)
-                     (pet-version pet) pose phase)
+                     (pet-version pet) pose phase (battle-face))
     (battle-draw-overlay!)
     (draw-speech! pet cat-x cat-y frame-n)
     ; log dim cyan on box fill; input bright; cursor black-on-white
@@ -242,23 +242,60 @@
   (game-on-move!)
   (cons (clamp-x (+ cat-x dx)) (clamp-y (+ cat-y dy))))
 
-; Facing + double-tap dash (same arrow within 10 frames → step 3).
+; Facing + double-tap dash + short momentum for smoother feel.
+(define *walk-dx* 0)
+(define *walk-dy* 0)
+(define *walk-left* 0)   ; remaining auto-steps
+(define *walk-cd* 0)     ; frames until next momentum step
+
 (define (nav-apply! dir dx dy)
   (battle-set-face! dir)
   (let* ((same (and (string=? dir *dash-dir*)
-                    (< (- *p-frame* *dash-frame*) 10)))
-         (step (if same 3 1))
+                    (< (- *p-frame* *dash-frame*) 12)))
+         (step (if same 4 1))
          (xy (move-by *p-x* *p-y* (* dx step) (* dy step))))
     (set! *dash-dir* dir)
     (set! *dash-frame* *p-frame*)
     (set! *p-x* (car xy))
     (set! *p-y* (cdr xy))
+    ; momentum: keep gliding 2 steps (or 1 after dash) on a short cadence
+    (set! *walk-dx* dx)
+    (set! *walk-dy* dy)
+    (set! *walk-left* (if same 1 2))
+    (set! *walk-cd* 1)
     (if same
         (begin
           (game-set-speech! "Dash!")
           (anim-start! "play" 6))
       #t)
     #t))
+
+; Soft coasting between key events (OS key-repeat + momentum).
+(define (walk-momentum-tick!)
+  (if (and (> *walk-left* 0) (<= *walk-cd* 0))
+      (let ((xy (move-by *p-x* *p-y* *walk-dx* *walk-dy*)))
+        (set! *p-x* (car xy))
+        (set! *p-y* (cdr xy))
+        (set! *walk-left* (- *walk-left* 1))
+        (set! *walk-cd* 2)
+        #t)
+    (begin
+      (if (> *walk-cd* 0)
+          (set! *walk-cd* (- *walk-cd* 1))
+        #t)
+      #t)))
+
+; Drain all pending keys quickly so movement is not limited to 1 event / 80ms.
+(define (play-drain-input!)
+  ; one short wait so we do not spin CPU when idle
+  (play-handle-event! (tui:read-event 12))
+  (let loop ((n 0))
+    (if (>= n 8)
+        #t
+      (let ((e (tui:read-event 0)))
+        (if e
+            (begin (play-handle-event! e) (loop (+ n 1)))
+          #t)))))
 
 (define (cat-demo-anim n)
   (layout-fit!)
@@ -418,15 +455,17 @@
       #f)))
 
 (define (play-step!)
+  ; Input first (low latency), then simulate, then draw.
+  (play-drain-input!)
+  (walk-momentum-tick!)
   (anim-tick!)
   (pet-render-sync)
-  ; NPC roam + bob while player is free (including during LLM wait)
+  ; NPC random roam every few frames
   (world-tick-npcs! *p-frame* W SCENE-Y0 SCENE-Y1)
   (battle-set-bounds! 0 SCENE-Y0 W SCENE-Y1)
   (battle-tick! *p-pet* *p-x* *p-y*)
   (play-poll-async!)
   (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
-  (play-handle-event! (tui:read-event 80))
   (set! *p-frame* (+ *p-frame* 1))
   (set! *p-tick* (+ *p-tick* 1))
   (if (and *p-running* (= (modulo *p-tick* 45) 0))

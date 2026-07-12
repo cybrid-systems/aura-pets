@@ -194,7 +194,14 @@
       (list "tree" 18 13)
       (list "tree" 35 13)
       (list "flower" 15 14)
-      (list "flower" 28 14)))
+      (list "flower" 28 14)
+      (list "crate" 25 12)
+      (list "crate" 42 14)
+      (list "wall" 10 11)
+      (list "wall" 50 12)
+      (list "bush" 30 13)
+      (list "bush" 20 14)
+      (list "rock" 45 13)))
   (set! *w-sky* (world-rgb 30 50 90))
   (set! *w-sky2* (world-rgb 45 70 110))
   (set! *w-floor* (world-rgb 55 110 65))
@@ -404,11 +411,13 @@
                (kind (car p))
                (x (car (cdr p)))
                (y (car (cdr (cdr p)))))
-          (if (string=? kind "tree")
-              (world-draw-tree! x y)
-            (if (string=? kind "flower")
-                (world-draw-flower! x y)
-              (world-draw-rock! x y))))
+          (cond
+            ((string=? kind "tree") (world-draw-tree! x y))
+            ((string=? kind "flower") (world-draw-flower! x y))
+            ((string=? kind "crate") (world-draw-crate! x y))
+            ((string=? kind "wall") (world-draw-wall! x y))
+            ((string=? kind "bush") (world-draw-bush! x y))
+            (else (world-draw-rock! x y))))
         (loop (cdr xs))))))
 
 (define (world-draw-tree! x y)
@@ -438,6 +447,40 @@
         (g2 (world-rgb 90 90 100)))
     (world-px x y g g2)
     (world-px (+ x 1) y g2 g)
+    #t))
+
+; Cover / 掩体: crate, wall, bush (for tank-style peeking)
+(define (world-draw-crate! x y)
+  (let ((wood (world-rgb 160 100 50))
+        (wood2 (world-rgb 120 70 30))
+        (nail (world-rgb 200 200 180)))
+    (world-px x (- y 1) wood wood2)
+    (world-px (+ x 1) (- y 1) wood2 wood)
+    (world-px x y wood2 wood)
+    (world-px (+ x 1) y wood wood2)
+    (world-px x (- y 1) nail wood)
+    #t))
+
+(define (world-draw-wall! x y)
+  (let ((br (world-rgb 140 90 70))
+        (br2 (world-rgb 100 60 50))
+        (mort (world-rgb 80 80 80)))
+    (world-px x (- y 2) br br2)
+    (world-px (+ x 1) (- y 2) br2 br)
+    (world-px x (- y 1) br2 mort)
+    (world-px (+ x 1) (- y 1) mort br)
+    (world-px x y br br2)
+    (world-px (+ x 1) y br2 br)
+    #t))
+
+(define (world-draw-bush! x y)
+  (let ((g (world-rgb 40 140 50))
+        (g2 (world-rgb 20 100 35)))
+    (world-px x (- y 1) g g2)
+    (world-px (+ x 1) (- y 1) g2 g)
+    (world-px (- x 1) y g g2)
+    (world-px x y g2 g)
+    (world-px (+ x 1) y g g)
     #t))
 
 ; Vertical bounce: -1 / 0 / 1 cycle (was always 0 — looked frozen).
@@ -513,10 +556,14 @@
       (world-px x (- y 1) fur fur2))
     #t))
 
-; Slow wander: mutate base x every few frames so NPCs roam the room.
-; cols / y0 / y1 keep them on the scene band.
+; Pseudo-random 0..n-1 from frame + seed (no RNG primitive needed).
+(define (world-prng frame seed n)
+  (if (<= n 0) 0
+    (modulo (+ (* frame 1103515245) (* seed 12345) 12345) n)))
+
+; Random roam: each NPC picks a direction bit-pattern and steps on its own cadence.
 (define (world-tick-npcs! frame cols y0 y1)
-  (if (not (= (modulo frame 8) 0))
+  (if (not (= (modulo frame 3) 0))
       #t
     (begin
       (set! *world-npcs*
@@ -529,18 +576,24 @@
                    (y (car (cdr (cdr n))))
                    (kind (car (cdr (cdr (cdr n)))))
                    (speech (car (cdr (cdr (cdr (cdr n))))))
-                   ; step left/right alternating by index + frame
-                   (dir (if (= (modulo (+ (quotient frame 8) i) 2) 0) 1 -1))
-                   (nx (let ((v (+ x dir)))
+                   ; personal tick: some NPCs move more often
+                   (cad (+ 1 (world-prng i 7 3)))
+                   (move? (= (modulo frame (* 3 cad)) 0))
+                   (roll (world-prng frame (+ i 3) 8))
+                   ; 0-3 step dirs, 4-7 idle (more idle = natural)
+                   (dx (if (not move?) 0
+                         (cond ((= roll 0) -1) ((= roll 1) 1) (else 0))))
+                   (dy (if (not move?) 0
+                         (cond ((= roll 2) -1) ((= roll 3) 1)
+                               ; occasional diagonal-ish extra
+                               ((= roll 4) (if (= (world-prng frame i 2) 0) -1 1))
+                               (else 0))))
+                   (nx (let ((v (+ x dx)))
                          (if (< v 2) 2
                            (if (> v (- cols 5)) (- cols 5) v))))
-                   ; slight vertical drift for friends only
-                   (ny (if (and (string=? kind "friend")
-                                (= (modulo (+ frame i) 24) 0))
-                           (let ((v (+ y (if (= (modulo i 2) 0) 1 -1))))
-                             (if (< v (+ y0 1)) (+ y0 1)
-                               (if (> v (- y1 4)) (- y1 4) v)))
-                         y)))
+                   (ny (let ((v (+ y dy)))
+                         (if (< v (+ y0 1)) (+ y0 1)
+                           (if (> v (- y1 4)) (- y1 4) v)))))
               (loop (cdr xs) (+ i 1)
                     (cons (list name nx ny kind speech) acc))))))
       #t)))

@@ -115,6 +115,48 @@ Helpers already in aura:
 
 Ship a tiny `(define (react event) …)` in the workspace; teach becomes `mutate:set-body "react" new-body` so the pet’s *program* evolves — Aura’s killer loop for agents, used as a toy for kids.
 
+## Entertainment loop: LLM × eDSL × AST (R2.6 plan)
+
+Kids should *feel* the pet’s brain and world are alive code, not just chat text.
+
+```text
+  free CN/EN in prompt          slash /grow /fire
+           │                            │
+           ▼                            ▼
+   nl_command.py (MiniMax)         pet-cmd.aura
+           │                            │
+           ▼                            ▼
+   ops file (theme/npc/teach)    care / morph / battle
+           │                            │
+           └──────────┬─────────────────┘
+                      ▼
+              in-process hot data
+         *edsl-rules*  *world-*  *combat-*
+                      │
+                      ▼
+         ast:snapshot + side files  (safe)
+         (no mid-session set-code — TUI closures)
+```
+
+### Fun hooks (shipping now)
+
+| Hook | Kid experience | eDSL/AST angle |
+|------|----------------|----------------|
+| `/teach feed 好吃` | pet says new line | rewrite rule row (AST-as-data) |
+| free text “下雪公园” | whole scene swap | world list rebind + snapshot |
+| `/grow` `/back` | body morph stack | versioned sprite binding |
+| tank `/fire` + NPC roam | arcade chaos | combat state + random props |
+
+### Next entertainment upgrades (design, not all shipped)
+
+1. **Mood eDSL** — rules like `(near-npc "Bunny" speech "Hi friend!")` evaluated each tick.  
+2. **LLM → rule pack** — “make her sassy” expands to 3–5 teach ops + love-delta tweaks.  
+3. **Stage scripts** — mini quests as data: `(quest find-crate reward grow)` hot-loaded.  
+4. **Safe AST playground** — after session end, dump `*edsl-rules*` into a real `.aura` file and `ast:snapshot` history for “save my pet brain”.  
+5. **NPC personalities as eDSL** — each friend has a tiny rule table; `/talk` samples it; fight triggers `(on-hit taunt)`.
+
+Principle: **mutate data the TUI already draws** every frame. That *is* hot update. Full `mutate:set-body` waits for engine-safe mid-session rebind.
+
 ## Iteration roadmap
 
 | Round | Goal | Exit criteria |

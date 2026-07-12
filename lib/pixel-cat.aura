@@ -1,9 +1,8 @@
-; lib/pixel-cat.aura — half-block cat + room + action poses.
+; lib/pixel-cat.aura — half-block cat with clear facing direction.
 ;
-; (draw-room! w h y0 y1)
-; (draw-pixel-cat! col row blink? mood version pose phase)
-; pose: "idle" | "eat" | "play" | "sleep" | "evolve"
-; phase: 0..3 animation step
+; (draw-pixel-cat! col row blink? mood version pose phase face)
+; face: "left" | "right" | "up" | "down"
+; pose: idle|eat|play|sleep|evolve|fight
 
 (define (px col row top bot)
   (tui:pixel col row top bot)
@@ -34,7 +33,6 @@
     (px 8 (+ y0 3) star sky)
     #t))
 
-; Form palettes: 0 Kitten, 1 Pink, 2 Tiger, 3 Shadow, 4 Dragon
 (define (cat-fur-pair version)
   (cond
     ((= version 0) (cons (rgb 255 186 140) (rgb 240 150 110)))
@@ -43,9 +41,57 @@
     ((= version 3) (cons (rgb 120 90 180) (rgb 70 50 120)))
     (else (cons (rgb 255 210 80) (rgb 255 140 40)))))
 
-; Base head/body; pose tweaks eyes/mouth/fx.
-; pose: idle|eat|play|sleep|evolve|fight
-(define (draw-pixel-cat! col row blink? mood version pose phase)
+; Draw facing indicator (snout / nose beam) so direction is obvious.
+(define (cat-draw-snout! c r face fur fur2 nose)
+  (cond
+    ((string=? face "right")
+     (begin
+       (px (+ c 10) (+ r 2) nose fur)
+       (px (+ c 11) (+ r 2) nose nose)
+       (px (+ c 11) (+ r 3) fur2 nose)
+       #t))
+    ((string=? face "left")
+     (begin
+       (px (+ c 1) (+ r 2) nose fur)
+       (px c (+ r 2) nose nose)
+       (px c (+ r 3) fur2 nose)
+       #t))
+    ((string=? face "up")
+     (begin
+       (px (+ c 5) r nose nose)
+       (px (+ c 6) r nose fur)
+       (px (+ c 5) (- r 1) nose nose)
+       #t))
+    (else
+     (begin
+       (px (+ c 5) (+ r 5) nose nose)
+       (px (+ c 6) (+ r 5) nose fur)
+       (px (+ c 5) (+ r 6) nose nose)
+       #t))))
+
+; Eyes shift toward facing side.
+(define (cat-eye-cols face)
+  (cond
+    ((string=? face "left") (cons 3 4))
+    ((string=? face "right") (cons 7 8))
+    ((string=? face "up") (cons 4 7))
+    (else (cons 4 7))))
+
+; Body lean: offset whole body 0/±1 toward face for readability.
+(define (cat-lean-x face)
+  (cond
+    ((string=? face "left") -1)
+    ((string=? face "right") 1)
+    (else 0)))
+
+(define (cat-lean-y face)
+  (cond
+    ((string=? face "up") -1)
+    ((string=? face "down") 1)
+    (else 0)))
+
+; face defaults to "right" if not a known string.
+(define (draw-pixel-cat! col row blink? mood version pose phase face)
   (let* ((pair (cat-fur-pair version))
          (fur (car pair))
          (fur2 (cdr pair))
@@ -55,6 +101,7 @@
          (spark (rgb 255 255 120))
          (slash (rgb 255 80 80))
          (closed (rgb 40 36 55))
+         (white (rgb 255 255 255))
          (eye (if (or blink? (string=? pose "sleep"))
                   fur
                 (if (string=? pose "fight")
@@ -62,23 +109,37 @@
                   (if (string=? mood "happy") (rgb 80 200 120) closed))))
          (nose (if (string=? pose "eat") food (rgb 255 100 140)))
          (cheek (rgb 255 150 170))
-         (c col)
-         (r row)
-         (body-r (if (or (and (string=? pose "play") (= (modulo phase 2) 0))
-                         (and (string=? pose "fight") (= (modulo phase 2) 0)))
-                     (- r 1)
-                   r)))
-    ; ears (play: perk higher)
-    (px (+ c 2) body-r ear fur)
-    (px (+ c 3) body-r fur fur)
-    (px (+ c 8) body-r fur fur)
-    (px (+ c 9) body-r ear fur)
-    (if (string=? pose "play")
+         (fc (if (string? face) face "right"))
+         (lx (cat-lean-x fc))
+         (ly (cat-lean-y fc))
+         (c (+ col lx))
+         (r (+ row ly))
+         (hop (if (or (and (string=? pose "play") (= (modulo phase 2) 0))
+                      (and (string=? pose "fight") (= (modulo phase 2) 0)))
+                  -1 0))
+         (body-r (+ r hop))
+         (eyes (cat-eye-cols fc))
+         (e1 (car eyes))
+         (e2 (cdr eyes)))
+    ; ears — front ear bigger on facing side
+    (if (string=? fc "left")
         (begin
-          (px (+ c 2) (- body-r 1) ear ear)
-          (px (+ c 9) (- body-r 1) ear ear))
-      #t)
-    ; head
+          (px (+ c 1) body-r ear ear)
+          (px (+ c 2) body-r ear fur)
+          (px (+ c 8) body-r fur fur)
+          (px (+ c 9) body-r ear fur))
+      (if (string=? fc "right")
+          (begin
+            (px (+ c 2) body-r ear fur)
+            (px (+ c 3) body-r fur fur)
+            (px (+ c 9) body-r ear fur)
+            (px (+ c 10) body-r ear ear))
+        (begin
+          (px (+ c 2) body-r ear fur)
+          (px (+ c 3) body-r fur fur)
+          (px (+ c 8) body-r fur fur)
+          (px (+ c 9) body-r ear fur))))
+    ; head band
     (px (+ c 2) (+ body-r 1) fur fur2)
     (px (+ c 3) (+ body-r 1) fur fur)
     (px (+ c 4) (+ body-r 1) fur fur)
@@ -87,23 +148,32 @@
     (px (+ c 7) (+ body-r 1) fur fur)
     (px (+ c 8) (+ body-r 1) fur fur)
     (px (+ c 9) (+ body-r 1) fur fur2)
-    ; eyes
-    (px (+ c 2) (+ body-r 2) fur2 fur)
+    ; eyes shifted to face (white sclera + pupil) — big readable
+    (px (+ c e1) (+ body-r 2) white eye)
+    (px (+ c e2) (+ body-r 2) white eye)
+    ; cheek blush opposite to face slightly
     (px (+ c 3) (+ body-r 2) cheek fur)
-    (px (+ c 4) (+ body-r 2) eye fur)
+    (px (+ c 8) (+ body-r 2) cheek fur)
+    ; fill rest of face row
+    (px (+ c 2) (+ body-r 2) fur2 fur)
     (px (+ c 5) (+ body-r 2) fur fur)
     (px (+ c 6) (+ body-r 2) fur fur)
-    (px (+ c 7) (+ body-r 2) eye fur)
-    (px (+ c 8) (+ body-r 2) cheek fur)
     (px (+ c 9) (+ body-r 2) fur2 fur)
-    ; nose / mouth (eat: food blob)
-    (px (+ c 3) (+ body-r 3) fur fur2)
-    (px (+ c 4) (+ body-r 3) fur fur)
-    (px (+ c 5) (+ body-r 3) nose fur)
-    (px (+ c 6) (+ body-r 3)
-        (if (string=? pose "eat") food fur) fur)
-    (px (+ c 7) (+ body-r 3) fur fur)
-    (px (+ c 8) (+ body-r 3) fur fur2)
+    ; nose / mouth on face side
+    (cond
+      ((string=? fc "left")
+       (begin
+         (px (+ c 3) (+ body-r 3) nose fur)
+         (px (+ c 4) (+ body-r 3) fur fur)))
+      ((string=? fc "right")
+       (begin
+         (px (+ c 7) (+ body-r 3) nose fur)
+         (px (+ c 6) (+ body-r 3) fur fur)))
+      (else
+       (begin
+         (px (+ c 5) (+ body-r 3) nose fur)
+         (px (+ c 6) (+ body-r 3)
+             (if (string=? pose "eat") food fur) fur))))
     ; body
     (px (+ c 2) (+ body-r 4) fur2 fur)
     (px (+ c 3) (+ body-r 4) fur fur)
@@ -115,6 +185,18 @@
     (px (+ c 9) (+ body-r 4) fur2 fur)
     (px (+ c 1) (+ body-r 4) fur2 fur2)
     (px (+ c 10) (+ body-r 4) fur fur2)
+    ; clear snout pointer
+    (cat-draw-snout! c body-r fc fur fur2 nose)
+    ; tail opposite to face (helps read direction)
+    (cond
+      ((string=? fc "right")
+       (px c (+ body-r 3) fur2 fur))
+      ((string=? fc "left")
+       (px (+ c 11) (+ body-r 3) fur2 fur))
+      ((string=? fc "up")
+       (px (+ c 10) (+ body-r 5) fur2 fur))
+      (else
+       (px (+ c 10) (+ body-r 1) fur2 fur)))
     ; sleep Zs
     (if (string=? pose "sleep")
         (begin
@@ -134,19 +216,23 @@
           (px (+ c 5) (+ body-r 5) food food)
           (px (+ c 6) (+ body-r 5) food (rgb 200 160 40)))
       #t)
-    ; fight slash FX
     (if (string=? pose "fight")
         (begin
-          (px (+ c 11) (+ body-r 1) slash slash)
-          (px (+ c 12) (+ body-r 2) slash (rgb 255 200 80))
-          (px (+ c 11) (+ body-r 3) slash slash)
-          (if (>= version 4)
-              (begin
-                (px (+ c 0) body-r spark spark)
-                (px (+ c 1) (- body-r 1) spark fur))
-            #t))
+          (cond
+            ((string=? fc "right")
+             (begin (px (+ c 12) (+ body-r 2) slash slash)
+                    (px (+ c 13) (+ body-r 2) slash (rgb 255 200 80))))
+            ((string=? fc "left")
+             (begin (px (- c 1) (+ body-r 2) slash slash)
+                    (px (- c 2) (+ body-r 2) slash (rgb 255 200 80))))
+            ((string=? fc "up")
+             (begin (px (+ c 5) (- body-r 1) slash slash)
+                    (px (+ c 6) (- body-r 2) slash slash)))
+            (else
+             (begin (px (+ c 5) (+ body-r 6) slash slash)
+                    (px (+ c 6) (+ body-r 7) slash slash))))
+          #t)
       #t)
-    ; tiger stripes
     (if (= version 2)
         (begin
           (px (+ c 4) (+ body-r 4) fur2 fur2)

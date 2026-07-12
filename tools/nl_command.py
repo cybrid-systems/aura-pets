@@ -366,7 +366,7 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
             )
             has_useful = True
             continue
-        m = re.match(r"^prop:(tree|flower|rock)\|(\d+)\|(\d+)$", line)
+        m = re.match(r"^prop:(tree|flower|rock|crate|wall|bush)\|(\d+)\|(\d+)$", line)
         if m:
             kind, xs, ys = m.groups()
             x = max(2, min(cols - 3, int(xs)))
