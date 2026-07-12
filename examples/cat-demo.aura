@@ -242,48 +242,44 @@
   (game-on-move!)
   (cons (clamp-x (+ cat-x dx)) (clamp-y (+ cat-y dy))))
 
-; Ergonomic move: step cooldown + mild double-tap dash (no long coast).
-; Human feel ≈ deliberate grid steps, not ice-skating.
-(define *move-cd* 0)       ; frames until next step allowed
-(define *move-period* 3)   ; min frames between steps (~4 steps/s at 60fps wait)
-(define *dash-period* 5)   ; longer recovery after dash
+; Fluid move: at most 1 step per frame (keys still update face).
+; Double-tap same arrow within 10 frames → 2-cell dash. No coast, no long CD.
+(define *moved-this-frame* #f)
 
 (define (nav-apply! dir dx dy)
   (battle-set-face! dir)
-  ; Still turning face even during move-cd (aim without sliding).
-  (if (> *move-cd* 0)
+  ; Extra keys this frame only re-aim (keeps turning snappy, no teleport).
+  (if *moved-this-frame*
       #t
     (let* ((same (and (string=? dir *dash-dir*)
                       (> *dash-frame* 0)
-                      (< (- *p-frame* *dash-frame*) 9)
-                      (> (- *p-frame* *dash-frame*) 1)))
-           ; dash = only +1 extra cell (total 2), not a rocket
+                      (< (- *p-frame* *dash-frame*) 10)
+                      (> (- *p-frame* *dash-frame*) 0)))
            (step (if same 2 1))
            (xy (move-by *p-x* *p-y* (* dx step) (* dy step))))
+      (set! *moved-this-frame* #t)
       (set! *dash-dir* dir)
       (set! *dash-frame* *p-frame*)
       (set! *p-x* (car xy))
       (set! *p-y* (cdr xy))
-      (set! *move-cd* (if same *dash-period* *move-period*))
       (if same
           (begin
             (game-set-speech! "Dash!")
-            (anim-start! "play" 5))
+            (anim-start! "play" 4))
         #t)
       #t)))
 
 (define (walk-momentum-tick!)
-  ; only decays move cooldown (no free auto-glide)
-  (if (> *move-cd* 0)
-      (set! *move-cd* (- *move-cd* 1))
-    #t)
+  ; reset per-frame move gate for next frame
+  (set! *moved-this-frame* #f)
   #t)
 
-; One wait + few drained events — OS key-repeat should not spam 8 steps/frame.
+; ~60Hz poll; drain a few events so OS key-repeat feels continuous.
 (define (play-drain-input!)
-  (play-handle-event! (tui:read-event 28))
+  (set! *moved-this-frame* #f)
+  (play-handle-event! (tui:read-event 16))
   (let loop ((n 0))
-    (if (>= n 2)
+    (if (>= n 5)
         #t
       (let ((e (tui:read-event 0)))
         (if e
@@ -450,7 +446,6 @@
 (define (play-step!)
   ; Input first (low latency), then simulate, then draw.
   (play-drain-input!)
-  (walk-momentum-tick!)
   (anim-tick!)
   (pet-render-sync)
   ; NPC random roam every few frames
