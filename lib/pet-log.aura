@@ -62,24 +62,38 @@
     (catch (e) #f)))
 
 (define (plog-flush!)
+  ; Append-only via shell — avoid read-file+write-file of the whole log
+  ; (races with Aura child jobs that also append → corrupt heap / SIGSEGV).
   (if (not *plog-on*)
       #f
-    (let* ((prev (plog-read-existing))
-           (chunk (plog-ring-text))
-           (body (if (= (string-length prev) 0)
-                     (string-append chunk "\n")
-                   (string-append prev
-                     (if (string=? (substring prev
-                            (- (string-length prev) 1)
-                            (string-length prev))
-                           "\n")
-                         (plog-empty)
-                       "\n")
-                     chunk "\n"))))
-      (plog-write-all! body)
-      (set! *plog-ring* '())
-      (set! *plog-last-flush* *plog-seq*)
-      #t)))
+    (let ((chunk (plog-ring-text)))
+      (if (= (string-length chunk) 0)
+          #f
+        (begin
+          (try
+            (shell (string-append
+                     "printf '%s\\n' '"
+                     ; strip single quotes so shell stays safe
+                     (plog-shell-safe chunk)
+                     "' >>"
+                     *plog-path*))
+            (catch (e)
+              (try (write-file *plog-path*
+                     (string-append chunk "\n"))
+                   (catch (e2) #f))))
+          (set! *plog-ring* '())
+          (set! *plog-last-flush* *plog-seq*)
+          #t)))))
+
+(define (plog-shell-safe s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (acc (plog-empty)))
+      (if (>= i n) acc
+        (let ((ch (substring s i (+ i 1))))
+          (if (or (string=? ch "'") (string=? ch "\\") (string=? ch "\n")
+                  (string=? ch "\r"))
+              (loop (+ i 1) (string-append acc " "))
+            (loop (+ i 1) (string-append acc ch))))))))
 
 ; Log one line. Fields should be short ASCII (no spaces ideally, use |).
 (define (plog tag detail)

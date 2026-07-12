@@ -136,11 +136,11 @@
     (try
       (begin
         (write-file out-path text)
+        ; Never read-modify-write the live debug log (races with parent plog → SIGSEGV).
         (try
-          (write-file "/tmp/aura-pets-debug.log"
-            (string-append
-              (try (read-file "/tmp/aura-pets-debug.log") (catch (e) ""))
-              "worldgen-aura: wrote " out-path "\n"))
+          (shell (string-append
+                   "echo worldgen-aura:wrote " out-path
+                   " >>/tmp/aura-pets-debug.log"))
           (catch (e) #f))
         #t)
       (catch (e) #f))))

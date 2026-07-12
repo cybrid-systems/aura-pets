@@ -449,15 +449,17 @@
         #f))))
 
 (define (play-step!)
-  ; Input first (low latency), then simulate, then draw.
+  ; 1) Apply deferred NL/worldgen FIRST (shallow stack — avoids SIGSEGV).
+  (play-poll-async!)
+  ; 2) Input
   (play-drain-input!)
   (anim-tick!)
   (pet-render-sync)
-  ; NPC random roam every few frames
+  ; 3) Simulate
   (world-tick-npcs! *p-frame* W SCENE-Y0 SCENE-Y1)
   (battle-set-bounds! 0 SCENE-Y0 W SCENE-Y1)
   (battle-tick! *p-pet* *p-x* *p-y*)
-  (play-poll-async!)
+  ; 4) Draw
   (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
   (set! *p-frame* (+ *p-frame* 1))
   (set! *p-tick* (+ *p-tick* 1))

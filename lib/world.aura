@@ -298,34 +298,38 @@
                           (if pr (world-add-prop! pr) #f))
                       #f)))))))))))
 
-; Split file text by newlines and apply.
+; Split file text by newlines and apply (tail-recursive line scan).
 (define (world-load-text! text)
   (set! *world-npcs* '())
   (set! *world-props* '())
   (let ((n (string-length text)))
-    (let loop ((i 0) (start 0))
-      (if (>= i n)
-          (begin
-            (if (< start n)
-                (world-apply-line! (substring text start n))
-              #t)
-            (set! *world-ok* #t)
-            #t)
-        (if (string=? (substring text i (+ i 1)) "\n")
+    ; Bound work: skip pathological files (> 64KB)
+    (if (> n 65536)
+        (begin (set! *world-ok* #f) #f)
+      (let loop ((i 0) (start 0))
+        (if (>= i n)
             (begin
-              (if (> i start)
-                  (world-apply-line! (substring text start i))
+              (if (< start n)
+                  (world-apply-line! (substring text start n))
                 #t)
-              (loop (+ i 1) (+ i 1)))
-          (loop (+ i 1) start))))))
+              (set! *world-ok* #t)
+              #t)
+          (if (string=? (substring text i (+ i 1)) "\n")
+              (begin
+                (if (> i start)
+                    (world-apply-line! (substring text start i))
+                  #t)
+                (loop (+ i 1) (+ i 1)))
+            (loop (+ i 1) start)))))))
 
 (define (world-load! path)
   (set! *world-path* path)
   (try
     (begin
-      (world-reset!)
+      ; Clear without full world-reset! (reset builds a huge default cast first)
       (set! *world-npcs* '())
       (set! *world-props* '())
+      (set! *world-theme* "Meadow")
       (if (file-exists? path)
           (begin
             (world-load-text! (read-file path))

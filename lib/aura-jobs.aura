@@ -30,29 +30,45 @@
             (loop (+ i 1) (string-append acc ch))))))))
 
 ; Background: generate world via Aura child process.
+; Offline: only load worldgen-engine (no llm-client) — smaller, safer.
+; Live: load llm-client too. Child stderr → separate file (not play log).
 (define (jobs-start-worldgen! cols rows out done err)
   (let* ((root (jobs-pets-root))
          (bin (jobs-aura-bin))
          (off (try (getenv "AURA_PETS_NL_OFFLINE") (catch (e) #f)))
-         (offline? (and off (string? off) (> (string-length off) 0)
-                        (not (string=? off "0"))))
+         (offline? (or (not (llm-key-present?))
+                       (and off (string? off) (> (string-length off) 0)
+                            (not (string=? off "0")))))
+         (loads
+           (if offline?
+               (string-append
+                 "(load \"" root "/lib/worldgen-engine.aura\") ")
+             (string-append
+               "(load \"" root "/lib/llm-client.aura\") "
+               "(load \"" root "/lib/worldgen-engine.aura\") ")))
          (expr
            (string-append
-             "(begin "
-             "(load \"" root "/lib/llm-client.aura\") "
-             "(load \"" root "/lib/worldgen-engine.aura\") "
+             "(begin " loads
              "(worldgen-run! " (number->string cols) " " (number->string rows)
              " \"" out "\" " (if offline? "#t" "#f") ") "
-             ")"))
+             "(display \"wg-child-ok\") (newline))"))
          (cmd
            (string-append
              "rm -f " done " " err "; "
              "( echo '" expr "' | " bin
-             " >>/tmp/aura-pets-debug.log 2>&1 "
+             " >/tmp/aura-pets-job.out 2>/tmp/aura-pets-job.err "
              " && touch " done
              " || touch " err
              " ) &")))
     (try (begin (shell cmd) #t) (catch (e) #f))))
+
+(define (llm-key-present?)
+  (try
+    (or (let ((k (getenv "MINIMAX_API_KEY")))
+          (and k (string? k) (> (string-length k) 0)))
+        (file-exists? "/home/dev/code/keys/minimax")
+        (file-exists? "/home/dev/code/key/minimax"))
+    (catch (e) #f)))
 
 ; Background: NL director via Aura child.
 (define (jobs-start-nl! text cols rows out done err)
@@ -77,7 +93,7 @@
            (string-append
              "rm -f " done " " err "; "
              "( echo '" expr "' | " bin
-             " >>/tmp/aura-pets-debug.log 2>&1 "
+             " >/tmp/aura-pets-job.out 2>/tmp/aura-pets-job.err "
              " && touch " done
              " || touch " err
              " ) &")))

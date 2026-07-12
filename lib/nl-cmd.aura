@@ -75,14 +75,16 @@
           #t
         (begin (set! *nl-busy* #f) #f)))))
 
-; Apply finished job in-process only (no mid-session AST dump — can SIGSEGV).
+; Deferred apply path: poll only marks ready; play-step applies next frame
+; so we are not nested under input-drain + battle-tick when loading.
+(define *nl-pending-kind* #f)
+
 (define (nl-apply-done! kind)
   (try
     (begin
       (if (string=? kind "world")
           (begin
             (world-load! "/tmp/aura-pets-world.txt")
-            ; light persist only
             (try (world-save!) (catch (e) #f))
             (set! *nl-last-src* "async-world-ok")
             (set! *nl-last-say*
@@ -94,7 +96,6 @@
           (if (file-exists? *nl-path*)
               (begin
                 (nl-apply-file! *nl-path*)
-                ; Skip edsl/world-aura-commit mid-play (eval_flat crash under load).
                 (try (world-save!) (catch (e) #f))
                 (if (= (string-length *nl-last-say*) 0)
                     (set! *nl-last-say*
@@ -113,8 +114,8 @@
         (set! *nl-last-say* "World update glitched — still playing!")
         *nl-last-say*))))
 
-; Finish apply after async job. Returns speech string, or #f if still pending.
-(define (nl-poll!)
+; Detect done file only — do not apply yet.
+(define (nl-poll-ready!)
   (if (not *nl-busy*)
       #f
     (if (file-exists? *nl-err-path*)
@@ -125,11 +126,26 @@
           (try (shell (string-append "rm -f " *nl-err-path*)) (catch (e) #f))
           *nl-last-say*)
       (if (file-exists? *nl-done-path*)
-          (let ((kind *nl-busy*))
+          (begin
+            (set! *nl-pending-kind* *nl-busy*)
             (set! *nl-busy* #f)
             (try (shell (string-append "rm -f " *nl-done-path*)) (catch (e) #f))
-            (nl-apply-done! kind))
+            ; signal "pending" without applying
+            "pending")
         #f))))
+
+; Apply deferred job if any. Call at top of play-step (shallow stack).
+(define (nl-poll!)
+  (if *nl-pending-kind*
+      (let ((k *nl-pending-kind*))
+        (set! *nl-pending-kind* #f)
+        (nl-apply-done! k))
+    (let ((r (nl-poll-ready!)))
+      (if (and r (string? r) (string=? r "pending"))
+          ; apply immediately next line of same poll if stack is ok —
+          ; prefer next frame: return #f this time, pending set
+          #f
+        r))))
 
 ; Minimal shell escape: strip double quotes and backslashes.
 (define (nl-shell-escape s)

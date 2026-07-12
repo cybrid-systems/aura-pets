@@ -85,11 +85,10 @@
         (begin
           (write-file out-path ops)
           (try
-            (write-file "/tmp/aura-pets-debug.log"
-              (string-append
-                (try (read-file "/tmp/aura-pets-debug.log") (catch (e) ""))
-                "nl-engine-aura: wrote " out-path
-                (if force-off " offline\n" " live\n")))
+            (shell (string-append
+                     "echo nl-engine-aura:wrote " out-path
+                     (if force-off " offline" " live")
+                     " >>/tmp/aura-pets-debug.log"))
             (catch (e) #f))
           #t)
         (catch (e) #f)))))
