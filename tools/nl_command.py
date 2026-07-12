@@ -73,7 +73,9 @@ aura:commit
 help:
 
 Rules:
-- Kid-safe. ASCII only in say/teach/npc speech/names.
+- Kid-safe. Player may write Chinese or English — understand both.
+- say/teach speech may be Chinese or English (max lengths still apply).
+- NPC Name: prefer short ASCII (Bunny) for terminal glyphs; speech can be CN.
 - If they ask for new place/background/scene/world/NPCs/props/colors: emit theme + colors + npc_clear + 3-5 npc + prop_clear + 3-6 prop. x in [2,COLS-4], y in [4,ROWS-7].
 - If they only want to change what the pet says for an action: emit teach: lines (+ aura:commit).
 - If they want both world and teach: emit both.
@@ -119,28 +121,60 @@ def call_minimax(key: str, text: str, cols: int, rows: int, context: str) -> str
     return content.strip()
 
 
-def ascii_clip(s: str, n: int) -> str:
-    s = re.sub(r"[^A-Za-z0-9 .!?,'\-\:]", "", s)
-    return s[:n].strip()
+def text_clip(s: str, n: int) -> str:
+    """Keep printable ASCII + CJK; clip by unicode chars not bytes."""
+    s = re.sub(
+        r"[^\w\s.!?,'\-\:：，。！？、\u4e00-\u9fff\u3400-\u4dbf]",
+        "",
+        s,
+        flags=re.UNICODE,
+    )
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:n]
 
 
 def offline_ops(text: str, cols: int, rows: int) -> str:
-    """Keyword heuristics when API is offline."""
-    t = text.strip().lower()
+    """Keyword heuristics when API is offline (EN + 中文)."""
+    raw = text.strip()
+    t = raw.lower()
     floor_y = max(8, rows - 6)
     lines: list[str] = []
+
+    # Chinese teach: "喂的时候说好吃" / "教 play 耶"
+    m_cn = re.search(
+        r"(?:教|teach)\s*(喂|吃|玩|睡|进化|feed|play|sleep|evolve)\s*(?:说|says?)?\s*(.+)$",
+        raw,
+        re.I,
+    )
+    if m_cn:
+        ev_map = {
+            "喂": "feed",
+            "吃": "feed",
+            "玩": "play",
+            "睡": "sleep",
+            "进化": "evolve",
+        }
+        ev = m_cn.group(1).lower()
+        ev = ev_map.get(ev, ev)
+        if ev == "eat":
+            ev = "feed"
+        speech = text_clip(m_cn.group(2), 28)
+        lines.append(f"say:学会了 {ev}!")
+        lines.append(f"teach:{ev}|{speech}")
+        lines.append("aura:commit")
+        return "\n".join(lines) + "\n"
 
     # teach patterns: "when feed say X" / "teach feed X" / "say X when eating"
     m = re.search(
         r"(?:teach\s+)?(?:when\s+)?(feed|eat|play|sleep|evolve|move|idle)\s+"
         r"(?:say\s+|says?\s+|to\s+)?[\"']?(.+?)[\"']?$",
-        text.strip(),
+        raw,
         re.I,
     )
     if not m:
         m = re.search(
             r"(?:say|react)\s+[\"']?(.+?)[\"']?\s+when\s+(feed|eat|play|sleep)",
-            text.strip(),
+            raw,
             re.I,
         )
         if m:
@@ -148,7 +182,7 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
             if ev == "eat":
                 ev = "feed"
             lines.append(f"say:Learned {ev}!")
-            lines.append(f"teach:{ev}|{ascii_clip(speech, 28)}")
+            lines.append(f"teach:{ev}|{text_clip(speech, 28)}")
             lines.append("aura:commit")
             return "\n".join(lines) + "\n"
 
@@ -157,12 +191,12 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
         if ev == "eat":
             ev = "feed"
         lines.append(f"say:Learned {ev}!")
-        lines.append(f"teach:{ev}|{ascii_clip(speech, 28)}")
+        lines.append(f"teach:{ev}|{text_clip(speech, 28)}")
         lines.append("aura:commit")
         return "\n".join(lines) + "\n"
 
     want_world = any(
-        k in t
+        k in t or k in raw
         for k in (
             "world",
             "scene",
@@ -182,16 +216,34 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
             "generate",
             "change",
             "add",
+            # 中文
+            "世界",
+            "场景",
+            "背景",
+            "公园",
+            "森林",
+            "海边",
+            "海滩",
+            "雪",
+            "冬天",
+            "夜晚",
+            "晚上",
+            "星星",
+            "朋友",
+            "生成",
+            "换",
+            "做",
+            "加",
         )
     )
 
-    if want_world or len(t) > 8:
-        snow = any(k in t for k in ("snow", "winter", "ice", "cold"))
-        night = any(k in t for k in ("night", "dark", "star"))
-        beach = any(k in t for k in ("beach", "ocean", "sea", "sand"))
+    if want_world or len(raw) > 4:
+        snow = any(k in t or k in raw for k in ("snow", "winter", "ice", "cold", "雪", "冬", "冰"))
+        night = any(k in t or k in raw for k in ("night", "dark", "star", "夜", "晚上", "星"))
+        beach = any(k in t or k in raw for k in ("beach", "ocean", "sea", "sand", "海", "沙滩", "沙滩"))
         if snow:
             lines += [
-                "say:Snow day! New friends!",
+                "say:下雪啦! 新朋友!",
                 "theme:Snowy Meadow",
                 "sky:180,200,230",
                 "sky2:210,225,245",
@@ -200,13 +252,13 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
                 "star:255,255,255",
             ]
             names = [
-                ("Penguin", "Waddle waddle!"),
+                ("Penguin", "Waddle!"),
                 ("Seal", "Splash!"),
                 ("Fox", "Snow fluff!"),
             ]
         elif beach:
             lines += [
-                "say:Beach day!",
+                "say:去海边玩!",
                 "theme:Sunny Beach",
                 "sky:100,180,255",
                 "sky2:160,210,255",
@@ -215,13 +267,13 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
                 "star:255,255,200",
             ]
             names = [
-                ("Crab", "Click click!"),
-                ("Gull", "Caw! Nice waves!"),
-                ("Fish", "Blub blub!"),
+                ("Crab", "Click!"),
+                ("Gull", "Caw!"),
+                ("Fish", "Blub!"),
             ]
         elif night:
             lines += [
-                "say:Night park ready!",
+                "say:夜晚公园!",
                 "theme:Starry Park",
                 "sky:15,20,45",
                 "sky2:25,30,70",
@@ -230,13 +282,13 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
                 "star:240,245,255",
             ]
             names = [
-                ("Owl", "Hoo hoo!"),
-                ("Moth", "Soft glow!"),
-                ("Cat", "Meow under stars!"),
+                ("Owl", "Hoo!"),
+                ("Moth", "Glow!"),
+                ("Cat", "Meow!"),
             ]
         else:
             lines += [
-                "say:New park ready!",
+                "say:新公园好了!",
                 "theme:Happy Park",
                 "sky:30,50,90",
                 "sky2:45,70,110",
@@ -245,9 +297,9 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
                 "star:230,235,255",
             ]
             names = [
-                ("Bunny", "Hi! Want to play?"),
-                ("Bird", "Chirp! Nice day!"),
-                ("Frog", "Ribbit~"),
+                ("Bunny", "Hi!"),
+                ("Bird", "Chirp!"),
+                ("Frog", "Ribbit!"),
             ]
         lines.append("npc_clear:")
         xs = [max(8, cols // 5), cols // 2, min(cols - 8, cols * 2 // 3)]
@@ -262,12 +314,12 @@ def offline_ops(text: str, cols: int, rows: int) -> str:
         lines.append("aura:commit")
         return "\n".join(lines) + "\n"
 
-    if any(k in t for k in ("help", "?", "what", "how")):
-        return "say:Type: snowy park / teach feed Pizza!\nhelp:\n"
+    if any(k in t or k in raw for k in ("help", "?", "what", "how", "帮助", "怎么")):
+        return "say:试试: 下雪公园 / 教喂 好吃\nhelp:\n"
 
     # Default: treat as teach for feed with the whole phrase (clipped)
-    speech = ascii_clip(text, 28) or "Hi!"
-    return f"say:I learned a feed line!\nteach:feed|{speech}\naura:commit\n"
+    speech = text_clip(raw, 28) or "Hi!"
+    return f"say:学会了一句!\nteach:feed|{speech}\naura:commit\n"
 
 
 def sanitize_ops(text: str, cols: int, rows: int) -> str:
@@ -278,11 +330,13 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
         if not line or line.startswith("#") or line.startswith("```"):
             continue
         if line.startswith("say:"):
-            out.append("say:" + ascii_clip(line[4:], 40))
+            out.append("say:" + text_clip(line[4:], 40))
             has_useful = True
             continue
         if line.startswith("theme:"):
-            name = re.sub(r"[^A-Za-z0-9 \-']", "", line[6:])[:24] or "Park"
+            name = text_clip(line[6:], 24) or "Park"
+            # theme still mostly ASCII for HUD stability; allow CJK
+            name = re.sub(r"[^\w \-'\u4e00-\u9fff]", "", name)[:24] or "Park"
             out.append(f"theme:{name}")
             has_useful = True
             continue
@@ -308,7 +362,7 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
             x = max(2, min(cols - 4, int(xs)))
             y = max(4, min(rows - 7, int(ys)))
             out.append(
-                f"npc:{name.strip()}|{x}|{y}|{kind}|{ascii_clip(speech, 28)}"
+                f"npc:{name.strip()}|{x}|{y}|{kind}|{text_clip(speech, 28)}"
             )
             has_useful = True
             continue
@@ -321,14 +375,15 @@ def sanitize_ops(text: str, cols: int, rows: int) -> str:
             has_useful = True
             continue
         m = re.match(
-            r"^teach:(feed|play|sleep|evolve|move|idle)\|(.{1,28})$",
+            r"^teach:(feed|play|sleep|evolve|move|idle)\|(.+)$",
             line,
             re.I,
         )
         if m:
-            ev, speech = m.group(1).lower(), ascii_clip(m.group(2), 28)
-            out.append(f"teach:{ev}|{speech}")
-            has_useful = True
+            ev, speech = m.group(1).lower(), text_clip(m.group(2), 28)
+            if speech:
+                out.append(f"teach:{ev}|{speech}")
+                has_useful = True
             continue
         m = re.match(r"^care:(feed|play|sleep)$", line, re.I)
         if m:

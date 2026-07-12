@@ -7,13 +7,15 @@
 ;   - Emacs-style line editing
 ;   - left/right arrows, Home/End when terminal sends them
 ;
-; Emacs map (empty-line 1/2/3/e/q still hotkeys):
+; Emacs map (empty-line: only 1/2/3 care + q quit — letters type normally):
 ;   C-a beginning   C-e end
 ;   C-b left        C-f right
 ;   C-d delete-fwd  C-h / DEL / BS backspace
 ;   C-k kill-to-end C-u kill-line
 ;   C-w kill-word-back
 ;   Enter submit
+; evolve/world/talk: type e / world / talk then Enter (not empty-line hotkeys).
+; UTF-8: Chinese and other multi-byte keys accepted; cursor is codepoint-aware.
 ;
 ; API:
 ;   (prompt-init! y)
@@ -25,11 +27,14 @@
 
 (define *prompt-y* 0)
 (define *prompt-buf* "x")
-(define *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  | C-a/e/b/f/d/k/u  ←→")
+(define *prompt-log* "hi! 1 2 3 care | type e/world/talk +Enter | CN ok")
 (define *prompt-submit* "x")
 (define *prompt-hot* "x")
+; *prompt-cursor* = byte index into *prompt-buf* (always on a codepoint boundary)
 (define *prompt-cursor* 0)
 (define *prompt-width* 76)
+; max bytes in the input buffer (Chinese is 3 bytes/char)
+(define *prompt-max-bytes* 120)
 
 (define (prompt-set-width! n)
   (set! *prompt-width* n)
@@ -47,7 +52,7 @@
   (set! *prompt-submit* (prompt-empty))
   (set! *prompt-hot* (prompt-empty))
   (set! *prompt-cursor* 0)
-  (set! *prompt-log* "hi!  1=feed  2=play  3=sleep  e=evolve  | emacs: C-a/e/b/f/d/k  ←→")
+  (set! *prompt-log* "hi! 1 2 3 care | type words (CN ok) | e/world/talk +Enter")
   #t)
 
 (define (prompt-set-log! msg)
@@ -70,11 +75,60 @@
   (set! *prompt-cursor* 0)
   #t)
 
-; First byte/code of a 1-unit string, else -1. Aura strings are byte-oriented.
+; First byte of a 1-byte string, else -1. Aura strings are byte-oriented.
 (define (prompt-ch-code ch)
   (if (and (string? ch) (= (string-length ch) 1))
       (char->integer (car (string->list ch)))
       -1))
+
+(define (prompt-byte-at s i)
+  (char->integer (car (string->list (substring s i (+ i 1))))))
+
+; UTF-8 codepoint byte-length starting at index i (0 if past end).
+(define (prompt-cp-len s i)
+  (let ((n (string-length s)))
+    (if (>= i n)
+        0
+      (let ((b (prompt-byte-at s i)))
+        (cond
+          ((< b 128) 1)
+          ((and (>= b 192) (< b 224) (>= (- n i) 2)) 2)
+          ((and (>= b 224) (< b 240) (>= (- n i) 3)) 3)
+          ((and (>= b 240) (< b 248) (>= (- n i) 4)) 4)
+          (else 1))))))
+
+; Snap byte index back to the start of the codepoint that contains it.
+(define (prompt-cp-start s i)
+  (let ((n (string-length s)))
+    (cond
+      ((<= i 0) 0)
+      ((>= i n) n)
+      (else
+       (let loop ((j i))
+         (if (<= j 0)
+             0
+           (let ((b (prompt-byte-at s j)))
+             ; UTF-8 continuation 10xxxxxx → keep walking left
+             (if (and (>= b 128) (< b 192))
+                 (loop (- j 1))
+               j))))))))
+
+; Start of codepoint immediately before byte index c (for backspace / left).
+(define (prompt-cp-start-before s c)
+  (if (<= c 0)
+      0
+    (prompt-cp-start s (- c 1))))
+
+; Number of codepoints in s (display columns, 1 cell each — engine limit).
+(define (prompt-cp-count s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (c 0))
+      (if (>= i n)
+          c
+        (let ((len (prompt-cp-len s i)))
+          (if (<= len 0)
+              c
+            (loop (+ i len) (+ c 1))))))))
 
 (define (prompt-clamp-cursor!)
   (let ((n (string-length *prompt-buf*)))
@@ -82,7 +136,8 @@
         (set! *prompt-cursor* 0)
       (if (> *prompt-cursor* n)
           (set! *prompt-cursor* n)
-        #t))))
+        ; snap to codepoint boundary if mid-char
+        (set! *prompt-cursor* (prompt-cp-start *prompt-buf* *prompt-cursor*))))))
 
 (define (prompt-left-part)
   (if (<= *prompt-cursor* 0)
@@ -96,24 +151,27 @@
       (substring *prompt-buf* *prompt-cursor* n))))
 
 (define (prompt-insert! ch)
-  (if (>= (string-length *prompt-buf*) 40)
-      #f
-    (begin
-      (set! *prompt-buf*
-        (string-append (prompt-left-part) ch (prompt-right-part)))
-      (set! *prompt-cursor* (+ *prompt-cursor* 1))
-      #t)))
+  (let ((clen (string-length ch))
+        (blen (string-length *prompt-buf*)))
+    (if (or (<= clen 0) (> (+ blen clen) *prompt-max-bytes*))
+        #f
+      (begin
+        (set! *prompt-buf*
+          (string-append (prompt-left-part) ch (prompt-right-part)))
+        (set! *prompt-cursor* (+ *prompt-cursor* clen))
+        #t))))
 
 (define (prompt-backspace!)
   (if (<= *prompt-cursor* 0)
       #f
-    (let ((c *prompt-cursor*)
-          (n (string-length *prompt-buf*)))
+    (let* ((c *prompt-cursor*)
+           (n (string-length *prompt-buf*))
+           (start (prompt-cp-start-before *prompt-buf* c)))
       (set! *prompt-buf*
         (string-append
-          (if (<= c 1) (prompt-empty) (substring *prompt-buf* 0 (- c 1)))
+          (if (<= start 0) (prompt-empty) (substring *prompt-buf* 0 start))
           (if (>= c n) (prompt-empty) (substring *prompt-buf* c n))))
-      (set! *prompt-cursor* (- c 1))
+      (set! *prompt-cursor* start)
       #t)))
 
 (define (prompt-delete-fwd!)
@@ -121,11 +179,13 @@
         (n (string-length *prompt-buf*)))
     (if (>= c n)
         #f
-      (begin
+      (let ((len (prompt-cp-len *prompt-buf* c)))
         (set! *prompt-buf*
           (string-append
             (if (<= c 0) (prompt-empty) (substring *prompt-buf* 0 c))
-            (if (>= (+ c 1) n) (prompt-empty) (substring *prompt-buf* (+ c 1) n))))
+            (if (>= (+ c len) n)
+                (prompt-empty)
+              (substring *prompt-buf* (+ c len) n))))
         #t))))
 
 (define (prompt-kill-to-end!)
@@ -161,9 +221,27 @@
                 (set! *prompt-cursor* j)
                 #t))))))))
 
+; delta is in codepoints (+1 right, -1 left).
 (define (prompt-move! delta)
-  (set! *prompt-cursor* (+ *prompt-cursor* delta))
-  (prompt-clamp-cursor!)
+  (cond
+    ((< delta 0)
+     (let loop ((k delta))
+       (if (>= k 0)
+           (prompt-clamp-cursor!)
+         (begin
+           (set! *prompt-cursor*
+             (prompt-cp-start-before *prompt-buf* *prompt-cursor*))
+           (loop (+ k 1))))))
+    ((> delta 0)
+     (let ((n (string-length *prompt-buf*)))
+       (let loop ((k delta))
+         (if (or (<= k 0) (>= *prompt-cursor* n))
+             (prompt-clamp-cursor!)
+           (begin
+             (set! *prompt-cursor*
+               (+ *prompt-cursor* (prompt-cp-len *prompt-buf* *prompt-cursor*)))
+             (loop (- k 1)))))))
+    (else (prompt-clamp-cursor!)))
   #t)
 
 (define (prompt-to-start!)
@@ -174,10 +252,22 @@
   (set! *prompt-cursor* (string-length *prompt-buf*))
   #t)
 
-; Printable ASCII only (space..~). Control bytes and DEL are never printable.
+; Printable: ASCII space..~ OR multi-byte UTF-8 (Chinese etc from tui:read-event).
 (define (prompt-printable? ch)
-  (let ((c (prompt-ch-code ch)))
-    (and (>= c 32) (<= c 126))))
+  (if (not (string? ch))
+      #f
+    (let ((n (string-length ch)))
+      (cond
+        ((= n 0) #f)
+        ((= n 1)
+         (let ((c (prompt-ch-code ch)))
+           (and (>= c 32) (<= c 126))))
+        ; Engine delivers one codepoint as UTF-8 string (2–4 bytes).
+        ((and (>= n 2) (<= n 4))
+         (let ((b (prompt-byte-at ch 0)))
+           ; lead byte of multi-byte sequence, not continuation
+           (and (>= b 192) (< b 248))))
+        (else #f)))))
 
 (define (prompt-is-enter? ch)
   (let ((c (prompt-ch-code ch)))
@@ -248,11 +338,9 @@
 (define (prompt-is-kill-word? ch)
   (= (prompt-ch-code ch) 23))     ; C-w
 
+; Empty-line hotkeys: digits only so e/g/t/letters can be typed (CN/English).
 (define (prompt-is-hot? ch)
-  (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
-      (string=? ch "e") (string=? ch "E")
-      (string=? ch "g") (string=? ch "G")
-      (string=? ch "t") (string=? ch "T")))
+  (or (string=? ch "1") (string=? ch "2") (string=? ch "3")))
 
 ; Handle one tui:read-event. → "quit"|"submit"|"edit"|"hot"|#f
 (define (prompt-handle e)
@@ -276,7 +364,7 @@
             ((prompt-is-del-fwd? ch)
              (prompt-delete-fwd!)
              "edit")
-            ; Empty line: arrows/wasd navigate the pet (not the caret).
+            ; Empty line: arrows navigate the pet (not the caret).
             ((and empty? (prompt-is-left? ch)) "nav-left")
             ((and empty? (prompt-is-right? ch)) "nav-right")
             ((and empty? (prompt-is-up? ch)) "nav-up")
@@ -305,26 +393,24 @@
             ((and empty? (or (string=? ch "q") (string=? ch "Q")))
              "quit")
             ((and empty? (prompt-is-hot? ch))
-             ; Normalize letter hotkeys to lowercase (G→g, T→t, E→e).
-             (set! *prompt-hot*
-               (cond
-                 ((or (string=? ch "E") (string=? ch "e")) "e")
-                 ((or (string=? ch "G") (string=? ch "g")) "g")
-                 ((or (string=? ch "T") (string=? ch "t")) "t")
-                 (else ch)))
+             (set! *prompt-hot* ch)
              "hot")
             ((prompt-printable? ch)
              (prompt-insert! ch)
              "edit")
             (else #f)))))))
 
+; Draw string by full UTF-8 codepoints (one cell each). Avoids splitting 中.
 (define (prompt-put-str! col row str fg bg attr)
   (let ((n (string-length str)))
-    (let loop ((i 0))
+    (let loop ((i 0) (x col))
       (if (>= i n) #t
-        (begin
-          (tui:cell (+ col i) row (substring str i (+ i 1)) fg bg attr)
-          (loop (+ i 1)))))))
+        (let ((len (prompt-cp-len str i)))
+          (if (<= len 0)
+              #t
+            (begin
+              (tui:cell x row (substring str i (+ i len)) fg bg attr)
+              (loop (+ i len) (+ x 1)))))))))
 
 ; Clear a horizontal run with spaces (erase stale glyphs after shrink).
 (define (prompt-clear-run! col row n fg bg)
@@ -338,19 +424,22 @@
   (let* ((row (+ *prompt-y* 1))
          (left (prompt-left-part))
          (right (prompt-right-part))
-         (cur-ch (if (= (string-length right) 0)
+         (rlen (string-length right))
+         (cur-len (if (= rlen 0) 0 (prompt-cp-len right 0)))
+         (cur-ch (if (= rlen 0)
                      " "
-                   (substring right 0 1)))
-         (rest (if (<= (string-length right) 1)
+                   (substring right 0 cur-len)))
+         (rest (if (<= rlen cur-len)
                    (prompt-empty)
-                 (substring right 1 (string-length right))))
-         (base 3))
+                 (substring right cur-len rlen)))
+         (base 3)
+         (left-cols (prompt-cp-count left)))
     (prompt-put-str! 1 *prompt-y* *prompt-log* log-fg bg 0)
     ; wipe input line then redraw
     (prompt-clear-run! 1 row *prompt-width* in-fg bg)
     (prompt-put-str! 1 row "> " in-fg bg 1)
     (prompt-put-str! base row left in-fg bg 0)
-    ; block cursor (reverse colors) under current column
-    (tui:cell (+ base (string-length left)) row cur-ch cursor-fg cursor-bg 1)
-    (prompt-put-str! (+ base (string-length left) 1) row rest in-fg bg 0)
+    ; block cursor under current display column (codepoint-based)
+    (tui:cell (+ base left-cols) row cur-ch cursor-fg cursor-bg 1)
+    (prompt-put-str! (+ base left-cols 1) row rest in-fg bg 0)
     #t))

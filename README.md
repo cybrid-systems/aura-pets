@@ -18,13 +18,15 @@ cd /path/to/aura-pets
 | **1** | Eat + eat anim |
 | **2** | Play + hop anim |
 | **3** | Sleep + Zzz anim |
-| **e** | Grow (needs love\*\*\* + happy + full) + sparkle |
-| **g** / `world` | Regenerate bg + NPCs (MiniMax-M3) |
-| **t** / `talk` | Talk to nearest friend NPC |
-| **q** | Bye |
-| free English in `>` | **LLM director**: change world / NPC / brain |
+| type `e` + Enter | Grow (not a steal-hotkey — letters type normally) |
+| type `world` / `talk` | Regen world / talk NPC |
+| **q** (empty line) | Bye |
+| free text in `>` | **LLM director** (EN + 中文), async |
 | `teach feed Nom!` | Classic eDSL teach (no LLM) |
 | `brain` | Show rules |
+
+> Empty-line hotkeys are only **1/2/3** (care) and **q**.  
+> **e / g / t** are normal letters so you can type English and Chinese without fights.
 
 ### Natural language director (eDSL + AST hot update)
 

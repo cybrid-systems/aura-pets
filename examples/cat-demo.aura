@@ -97,7 +97,7 @@
   (draw-text 34 1 "] zest[" BAR-FG BG)
   (draw-text 41 1 (bar (pet-energy pet)) BAR-FG BG)
   (draw-text 1 2
-             (string-append "type words | 1 2 3 e g t q  ["
+             (string-append "type+Enter | 123 care q  ["
                             (world-theme) " npcs="
                             (number->string (world-npc-count))
                             (if (nl-busy?) " ...]" "]"))

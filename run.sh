@@ -46,11 +46,12 @@ Aura Pets
   ./run.sh smoke
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
-Play: arrows move | 1 eat 2 play 3 sleep | e grow | g world | t talk | q bye
-      type free English to direct the world (LLM):
-        snowy park with penguin
-        when feed say Pizza nom!
-        teach feed Hi | brain | world | talk
+Play: arrows move | 1 eat 2 play 3 sleep | q bye
+      type then Enter (e/g/t are NOT hotkeys — type freely, CN ok):
+        e / grow          evolve
+        world / talk      regen / nearest NPC
+        下雪公园          NL director (async LLM)
+        教喂 好吃啦
 World/NL: MiniMax-M3 (key: ~/code/keys/minimax) → eDSL + AST hot update
 
 Debug: every play session writes $LOG_FILE
