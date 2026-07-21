@@ -49,13 +49,6 @@
                 (car xs)
               (string-append s "\n" (car xs)))))))
 
-(define (plog-read-existing)
-  (try
-    (if (file-exists? *plog-path*)
-        (read-file *plog-path*)
-      (plog-empty))
-    (catch (e) (plog-empty))))
-
 (define (plog-write-all! body)
   (try
     (write-file *plog-path* body)

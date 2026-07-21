@@ -23,9 +23,6 @@
     (list "move" "Boing!" 0)
     (list "idle" "..." 0)))
 
-(define (edsl-empty)
-  (substring "x" 0 0))
-
 (define (edsl-reset!)
   (set! *edsl-rules*
     (list

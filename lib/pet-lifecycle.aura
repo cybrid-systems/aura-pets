@@ -5,7 +5,8 @@
 ; vitals = (hunger mood energy) each 0..10
 ;
 ; Wraps std/atomic-swap into pet-make / pet-evolve / pet-render-sync.
-; Care: pet-feed / pet-play / pet-sleep / pet-tick / pet-apply-cmd
+; Care: pet-feed / pet-play / pet-sleep / pet-apply-cmd
+; Decay: game-soft-tick (pet-tick removed — too aggressive for kids floor).
 ;
 ; run.sh sets AURA_PATH so (require "std/...") resolves.
 ; Do NOT call imported procs at top-level init after require (load bug).
@@ -184,16 +185,6 @@
              (- (pet-hunger pet) 1)
              (+ (pet-mood pet) 1)
              (+ (pet-energy pet) 4))))
-    (store-put! (pet-id u) u)
-    u))
-
-; Passive decay once per few frames (gentle). Prefer game-soft-tick for kids floor.
-(define (pet-tick pet)
-  (let* ((h (pet-hunger pet))
-         (e (pet-energy pet))
-         (nh (if (<= h 1) 1 (- h 1)))
-         (ne (if (<= e 1) 1 (- e 1)))
-         (u (pet-with-vitals pet nh (pet-mood pet) ne)))
     (store-put! (pet-id u) u)
     u))
 

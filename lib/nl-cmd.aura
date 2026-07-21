@@ -1,8 +1,11 @@
 ; lib/nl-cmd.aura — natural language command pipeline for aura-pets.
 ;
-; Flow (pure Aura progressive path):
+; Flow (pure Aura async path):
 ;   free text → Aura child (lib/nl-engine + llm-client) → /tmp/aura-pets-nl.txt
 ;            → (nl-apply-file!) mutates world + eDSL in-process
+; Async only — sync pipeline (nl-handle! / nl-generate!) removed; the play
+; loop never blocks on LLM HTTP. Async apply is deferred to next play-step
+; frame via nl-poll-ready! / nl-apply-done! to avoid nested eval_flat.
 ; Legacy Python tools/ kept only as optional fallback if AURA_BIN missing.
 
 (define *nl-path* "/tmp/aura-pets-nl.txt")
@@ -31,17 +34,7 @@
       (begin (write-file *nl-ctx-path* s) #t)
       (catch (e) #f))))
 
-; Sync generate (blocks). Prefer Aura engines; optional Python fallback.
-(define (nl-generate! user-text cols rows)
-  (nl-write-context!)
-  (try
-    (begin
-      ; in-process if engines loaded
-      (nl-engine-run! user-text cols rows *nl-path* #f)
-      (set! *nl-last-src* "aura")
-      #t)
-    (catch (e)
-      (begin (set! *nl-last-src* "err") #f))))
+
 
 ; Async: Aura child process (not Python). Play loop keeps running.
 (define (nl-start-async! user-text cols rows)
@@ -146,18 +139,6 @@
           ; prefer next frame: return #f this time, pending set
           #f
         r))))
-
-; Minimal shell escape: strip double quotes and backslashes.
-(define (nl-shell-escape s)
-  (let ((n (string-length s)))
-    (let loop ((i 0) (acc (substring "x" 0 0)))
-      (if (>= i n)
-          acc
-        (let ((ch (substring s i (+ i 1))))
-          (if (or (string=? ch "\"") (string=? ch "\\") (string=? ch "$")
-                  (string=? ch "`") (string=? ch "\n") (string=? ch "\r"))
-              (loop (+ i 1) acc)
-            (loop (+ i 1) (string-append acc ch))))))))
 
 ; Apply one op line. Returns #t if recognized.
 (define (nl-apply-line! line)
@@ -275,29 +256,7 @@
       #f)
     (catch (e) #f)))
 
-; Full pipeline: user text → python → apply. Returns speech string.
-(define (nl-handle! user-text cols rows)
-  (set! *nl-last-say* "")
-  (set! *nl-last-src* "none")
-  (nl-generate! user-text cols rows)
-  (if (file-exists? *nl-path*)
-      (begin
-        (nl-apply-file! *nl-path*)
-        ; If LLM forgot aura:commit but taught, still commit eDSL AST.
-        (if (not *nl-did-aura*)
-            (begin
-              (edsl-aura-commit!)
-              (world-aura-commit!))
-          #t)
-        (if (= (string-length *nl-last-say*) 0)
-            (set! *nl-last-say*
-              (string-append "OK " (world-theme)
-                             " npcs=" (number->string (world-npc-count))))
-          #t)
-        *nl-last-say*)
-    (begin
-      (set! *nl-last-say* "NL tool failed. Try teach feed Hi")
-      *nl-last-say*)))
+
 
 ; True when free text should go through the LLM director (not a short cmd).
 (define (nl-should-handle? cmd)
