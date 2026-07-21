@@ -256,27 +256,4 @@
       #t)
     #t))
 
-; Legacy room fill (unused by world.aura path; kept for demos).
-(define (draw-room! w h y0 y1)
-  (let* ((sky (rgb 22 28 52))
-         (sky2 (rgb 32 40 72))
-         (floor1 (rgb 52 40 62))
-         (floor2 (rgb 68 50 78))
-         (star (rgb 230 240 255))
-         (floor-y (- y1 2)))
-    (let y-loop ((y y0))
-      (if (>= y y1) #t
-        (begin
-          (let x-loop ((x 0))
-            (if (>= x w) #t
-              (begin
-                (if (>= y floor-y)
-                    (px x y floor1 floor2)
-                  (px x y sky sky2))
-                (x-loop (+ x 1)))))
-          (y-loop (+ y 1)))))
-    (px 3 (+ y0 1) star sky)
-    (px 12 (+ y0 2) star sky)
-    (px 28 (+ y0 1) star sky)
-    (px 40 (+ y0 2) star sky)
-    #t))
+
