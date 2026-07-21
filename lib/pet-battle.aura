@@ -457,45 +457,84 @@
       #f)))
 
 ; Hit-test bullet vs NPCs (pet team) or pet (npc team).
-; 3-pass tick: move + expire → bullet-vs-bullet cancel+explode → hit NPCs/pet.
+; 2-pass tick: bullet-vs-bullet cancel (post-move) → move + hit-tests.
+; Pass 2 sets *bullet-cancelled* to the list of pair-members (flat) so
+; the main loop can drop them. Uses set! for state to avoid let* scope
+; issues seen in the prior 3-pass attempt.
+(define *bullet-cancelled* '())
+
+(define (bullet-cancelled? b)
+  (let loop ((cs *bullet-cancelled*))
+    (if (null? cs) #f
+      (if (and (= (car b) (car (car cs)))
+               (= (car (cdr b)) (car (cdr (car cs)))))
+          #t
+        (loop (cdr cs))))))
+
 (define (battle-bullets-tick! pet-x pet-y)
-  ; Pass 1: move + expire + OOB.
+  ; Pass 1: move + expire + OOB. Build moved list.
   (let ((moved '()))
-    (let loop ((xs *bullets*) (acc '()))
-      (if (null? xs)
-          (set! moved (reverse acc))
+    (set! moved
+      (let loop ((xs *bullets*) (acc '()))
+        (if (null? xs) (reverse acc)
+          (let* ((b (car xs))
+                 (nx (+ (bullet-x b) (car (cdr (cdr b)))))
+                 (ny (+ (bullet-y b) (car (cdr (cdr (cdr b))))))
+                 (nl (- (bullet-life b) 1)))
+            (if (or (<= nl 0)
+                    (< nx *b-x0*) (>= nx *b-x1*)
+                    (< ny *b-y0*) (>= ny *b-y1*))
+                (loop (cdr xs) acc)
+              (loop (cdr xs)
+                    (cons (list nx ny
+                                (car (cdr (cdr b)))
+                                (car (cdr (cdr (cdr b))))
+                                (bullet-team b)
+                                (car (cdr (cdr (cdr (cdr (cdr b))))))
+                                nl
+                                (bullet-wpn b))
+                          acc)))))))
+    ; Pass 2: detect opposing-team bullets at same (x,y) in moved list.
+    ; Explode at meeting point. Set *bullet-cancelled* to flat list of
+    ; pair-members (so main loop drops both).
+    (set! *bullet-cancelled* '())
+    (let find ((xs moved))
+      (if (null? xs) #t
         (let* ((b (car xs))
-               (nx (+ (bullet-x b) (car (cdr (cdr b)))))
-               (ny (+ (bullet-y b) (car (cdr (cdr (cdr b))))))
-               (nl (- (bullet-life b) 1))
-               (nb (list nx ny
-                          (car (cdr (cdr b)))
-                          (car (cdr (cdr (cdr b))))
-                          (car (cdr (cdr (cdr (cdr b)))))
-                          (car (cdr (cdr (cdr (cdr (cdr b))))))
-                          nl
-                          (bullet-wpn b))))
-          (if (or (<= nl 0)
-                  (< nx *b-x0*) (>= nx *b-x1*)
-                  (< ny *b-y0*) (>= ny *b-y1*))
-              (loop (cdr xs) acc)
-            (loop (cdr xs) (cons nb acc)))))))
-    ; Pass 2: opposing bullets at same (x,y) cancel + explode.
-    (let* ((pairs (battle-bullet-collide-detect! moved))
-           (after-collide (battle-bullet-collide-apply! moved pairs)))
-      ; Pass 3: hit-tests against NPCs (team 0) and pet (team 1).
-      (set! *bullets*
-        (let loop ((xs after-collide) (acc '()))
-          (if (null? xs)
-              (reverse acc)
-            (let ((b (car xs)))
-              (cond
-                ((and (= (bullet-team b) 0) (battle-bullet-hit-npc! b))
-                 (loop (cdr xs) acc))
-                ((and (= (bullet-team b) 1) (battle-bullet-hit-pet! b pet-x pet-y))
-                 (loop (cdr xs) acc))
-                (else (loop (cdr xs) (cons b acc)))))))))))
-  #t)
+               (bx (bullet-x b)) (by (bullet-y b))
+               (bt (bullet-team b)))
+          (let scan ((ys (cdr xs)))
+            (if (null? ys) (find (cdr xs))
+              (let ((o (car ys)))
+                (if (and (not (= bt (bullet-team o)))
+                         (= bx (bullet-x o))
+                         (= by (bullet-y o))
+                         (not (bullet-cancelled? b))
+                         (not (bullet-cancelled? o)))
+                    (begin
+                      (battle-bullet-explode! bx by)
+                      (set! *bullet-cancelled*
+                        (cons o (cons b *bullet-cancelled*)))
+                      (find (cdr xs)))
+                    (scan (cdr ys)))))))))
+    ; Pass 3: hit-tests against NPCs (team 0) and pet (team 1).
+    ; Skip cancelled bullets (already removed by Pass 2).
+    (set! *bullets*
+      (let loop ((xs moved) (acc '()))
+        (if (null? xs) (reverse acc)
+          (let ((b (car xs)))
+            (cond
+              ((bullet-cancelled? b) (loop (cdr xs) acc))
+              ((= (bullet-team b) 0)
+               (if (battle-bullet-hit-npc! b)
+                   (loop (cdr xs) acc)
+                 (loop (cdr xs) (cons b acc))))
+              (else
+               (if (battle-bullet-hit-pet! b pet-x pet-y)
+                   (loop (cdr xs) acc)
+                 (loop (cdr xs) (cons b acc)))))))))
+    (set! *bullet-cancelled* '())
+    #t))
 
 ; Directional head glyph for cool projectiles.
 (define (bullet-head-ch dx dy wpn team)
