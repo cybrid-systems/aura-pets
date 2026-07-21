@@ -267,7 +267,7 @@
 (define (bullet-x b) (car b))
 (define (bullet-y b) (car (cdr b)))
 (define (bullet-team b) (car (cdr (cdr (cdr (cdr b))))))
-(define (bullet-life b) (car (cdr (cdr (cdr (cdr (cdr b)))))))
+(define (bullet-life b) (car (cdr (cdr (cdr (cdr (cdr (cdr b))))))))
 (define (bullet-wpn b) (car (cdr (cdr (cdr (cdr (cdr (cdr (cdr b)))))))))
 
 ; 6-cell star explosion + 4 bright diagonals; 4-8 frame life.
