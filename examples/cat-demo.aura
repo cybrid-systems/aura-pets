@@ -553,6 +553,10 @@
   (prompt-set-log! (game-speech))
   (plog "ready" "entering-play-loop")
   (plog-flush!)
+  ; Frame cap to calm flicker on terminal TUI. Aura has no tui:sleep
+  ; primitive, so we shell-sleep. ~10ms fork+exec + 30ms = ~25fps.
+  ; Anqi can bump *p-frame-sleep* up if it still feels too chaotic.
+  (define *p-frame-sleep* "0.030")
   ; Host (while pred body) runs in C++ — no Scheme stack growth per frame.
   (while (lambda () *p-running*)
          (lambda ()
@@ -564,7 +568,9 @@
                (play-step!)
                (if (= *p-frame* 1)
                    (begin (plog "frame" "first-ok") (plog-flush!))
-                 #t))
+                 #t)
+               (try (shell (string-append "sleep " *p-frame-sleep*))
+                    (catch (e) #f)))
              (catch (err)
                (begin
                  (play-stop! "exception")
