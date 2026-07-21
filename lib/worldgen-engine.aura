@@ -74,7 +74,8 @@
           (and (>= n 7) (string=? (substring line 0 7) "floor2:"))
           (and (>= n 5) (string=? (substring line 0 5) "star:"))
           (and (>= n 4) (string=? (substring line 0 4) "npc:"))
-          (and (>= n 5) (string=? (substring line 0 5) "prop:"))))))
+          (and (>= n 5) (string=? (substring line 0 5) "prop:"))
+          (and (>= n 7) (string=? (substring line 0 7) "sprite:"))))))
 
 ; Host while scan — named-let over LLM-sized text SIGSEGVs (no TCO).
 (define *wg-text* "")

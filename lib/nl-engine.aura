@@ -11,15 +11,22 @@
     "say:<reply max 40>\ntheme:<name>\n"
     "bg:<meadow|cyber|matrix|stars|city|ocean|grid|sunset>\n"
     "sky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
-    "npc_clear:\nnpc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
-    "prop_clear:\nprop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
+    "npc_clear:\nnpc:<Name>|<x>|<y>|<friend|decor>|<speech>[|<sprite-name>]\n"
+    "prop_clear:\nprop:<tree|flower|rock|crate|wall|bush>|<x>|<y>[|<sprite-name>]\n"
+    "sprite:<name>|<w>|<h>|<r>,<g>,<b>|<r>,<g>,<b>|...   (define a custom sprite, max 16x12)\n"
     "teach:<feed|play|sleep|evolve|move|idle>|<speech>\n"
     "aura:commit\nhelp:\n"
     "Background: cyber/matrix = neon grid + matrix rain (cyber cat).\n"
     "stars=night, ocean=beach, city=skyline, sunset=warm sky, meadow=park.\n"
     "When user asks for cyber/neon/matrix/赛博, emit bg:cyber + dark sky colors.\n"
     "Prefer 4-6 npcs and 6-10 props (max 6 npcs / 12 props). "
-    "Kid-safe. ASCII names. x in [2,COLS-4] y in [4,ROWS-7]."))
+    "Kid-safe. ASCII names. x in [2,COLS-4] y in [4,ROWS-7].\n"
+    "To make a custom creature (dragon/robot/blob/whatever), first emit "
+    "a sprite op with w*h cells of r,g,b triples, then add npc referencing "
+    "the sprite by name (6th field). Example:\n"
+    "  sprite:blob|3|3|255,0,0|0,255,0|0,0,255|255,255,0|255,0,255|255,128,0|0,255,255|255,255,255|0,0,0\n"
+    "  npc:Blob|15|8|friend|Hi!|blob\n"
+    "Each cell is one r,g,b triple; rows left-to-right, top-to-bottom."))
 
 ; ── Offline heuristics ──
 (define (nl-has? s sub)

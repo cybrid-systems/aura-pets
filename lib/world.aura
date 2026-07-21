@@ -146,6 +146,122 @@
 
 (define (world-npcs) *world-npcs*)
 
+; ── Dynamic sprite storage (LLM-defined creatures/objects) ──
+; Sprite = (name w h pixels). pixels is a flat list of packed RGB ints,
+; length = w*h, in row-major order. LLM emits `sprite:<name>|<w>|<h>
+; |<r>,<g>,<b>|...` to define one; NPCs/props then reference the name.
+; This is the eDSL mutation surface for "render new content": Aura's
+; data-as-data layer (DESIGN.md §eDSL Layer A) lets the LLM hot-load
+; arbitrary sprites without `set-code` / workspace touch.
+(define *world-sprites* '())
+
+(define (world-sprite-add! sprite)
+  (set! *world-sprites*
+    (let loop ((xs *world-sprites*) (acc '()))
+      (cond
+        ((null? xs) (cons sprite acc))
+        ((string=? (car (car xs)) (car sprite))
+         (append (reverse acc) (cons sprite (cdr xs))))
+        (else (loop (cdr xs) (cons (car xs) acc)))))))
+
+(define (world-sprite-get name)
+  (let loop ((xs *world-sprites*))
+    (if (null? xs) #f
+      (if (string=? (car (car xs)) name)
+          (car xs)
+          (loop (cdr xs))))))
+
+; Draw sprite at (x, y) using tui:pixel with same top/bot (solid color).
+; Static (no bob/wig): dynamic sprites don't have the natural creature
+; animation that the hardcoded NPC sprite has.
+(define (world-sprite-draw! sprite x y)
+  (let* ((w (car (cdr sprite)))
+         (h (car (cdr (cdr sprite))))
+         (pixels (car (cdr (cdr (cdr sprite))))))
+    (let loop ((i 0) (ps pixels))
+      (if (null? ps) #t
+        (let* ((col (modulo i w))
+               (row (quotient i w))
+               (rgb (car ps)))
+          (world-px (+ x col) (+ y row) rgb rgb)
+          (loop (+ i 1) (cdr ps)))))))
+
+; Find first "|" in s starting at i. Returns -1 if not found.
+(define (find-bar s i)
+  (let ((n (string-length s)))
+    (let loop ((j i))
+      (cond
+        ((>= j n) -1)
+        ((string=? (substring s j (+ j 1)) "|") j)
+        (else (loop (+ j 1)))))))
+
+; Parse `|`-separated list of r,g,b triples.
+(define (parse-rgb-list s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (acc '()))
+      (if (>= i n) (reverse acc)
+        (let find-bar ((j i))
+          (cond
+            ((>= j n)
+             (let ((triple (parse-rgb (substring s i j))))
+               (if triple (reverse (cons triple acc)) '())))
+            ((string=? (substring s j (+ j 1)) "|")
+             (let ((triple (parse-rgb (substring s i j))))
+               (if triple (loop (+ j 1) (cons triple acc)) '())))
+            (else (find-bar (+ j 1)))))))))
+
+; Parse `sprite:<name>|<w>|<h>|<r>,<g>,<b>|...`.
+; Sprite size limited to 16 wide × 12 tall (LLM token budget + screen).
+(define (parse-sprite line)
+  (let* ((body (substring line 7 (string-length line)))
+         (n (string-length body))
+         (p1 (find-bar body 0))
+         (p2 (if (> p1 -1) (find-bar body (+ p1 1)) -1)))
+    (if (or (< p1 0) (< p2 0))
+        #f
+        (let* ((name (substring body 0 p1))
+               (w (string->number (substring body (+ p1 1) p2)))
+               (h (string->number (substring body (+ p2 1) n)))
+               (rest (substring body (+ p2 1) n))
+               (pixels (parse-rgb-list rest)))
+          (if (and w h (>= w 1) (<= w 16) (>= h 1) (<= h 12)
+                   (= (length pixels) (* w h))
+                   (> (string-length name) 0))
+              (list name w h pixels)
+              #f)))))
+
+; Sprite name from NPC record (6-field). Returns #f if absent.
+(define (npc-sprite-name n)
+  (if (>= (length n) 6)
+      (let ((s (car (cdr (cdr (cdr (cdr (cdr n))))))))
+        (if (and (string? s) (> (string-length s) 0)) s #f))
+      #f))
+
+; Sprite name from prop record (4-field). Returns #f if absent.
+(define (prop-sprite-name p)
+  (if (>= (length p) 4)
+      (let ((s (car (cdr (cdr (cdr p)))))
+        (if (and (string? s) (> (string-length s) 0)) s #f))
+      #f))
+
+; Serialize sprite back to "sprite:<name>|<w>|<h>|<r>,<g>,<b>|..." line.
+(define (world-sprite-to-line sprite)
+  (let* ((name (car sprite))
+         (w (car (cdr sprite)))
+         (h (car (cdr (cdr sprite))))
+         (pixels (car (cdr (cdr (cdr sprite)))))
+         (head (string-append "sprite:" name "|"
+                              (number->string w) "|"
+                              (number->string h) "|"))
+         (body (let loop ((ps pixels) (acc head))
+                 (if (null? ps) acc
+                   (let* ((p (car ps))
+                          (rgb-str (world-rgb-str p)))
+                     (loop (cdr ps)
+                           (string-append acc rgb-str "|")))))))
+    ; Strip trailing "|"
+    (substring body 0 (- (string-length body) 1))))
+
 ; Unpack packed rgb → "r,g,b" for save / AST source.
 (define (world-rgb-str packed)
   (let* ((r (quotient packed 65536))
@@ -171,24 +287,46 @@
                "floor:" (world-rgb-str *w-floor*) "\n"
                "floor2:" (world-rgb-str *w-floor2*) "\n"
                "star:" (world-rgb-str *w-star*) "\n"))
+         (s0 (let loop ((xs *world-sprites*) (acc s0))
+               (if (null? xs) acc
+                 (loop (cdr xs)
+                       (string-append acc
+                         (world-sprite-to-line (car xs)) "\n")))))
          (s1 (let loop ((xs *world-npcs*) (acc s0))
                (if (null? xs) acc
-                 (let ((n (car xs)))
-                   (loop (cdr xs)
-                         (string-append acc
-                           "npc:" (car n) "|"
-                           (number->string (car (cdr n))) "|"
-                           (number->string (car (cdr (cdr n)))) "|"
-                           (car (cdr (cdr (cdr n)))) "|"
-                           (car (cdr (cdr (cdr (cdr n))))) "\n"))))))
+                 (let* ((n (car xs))
+                        (sprite (npc-sprite-name n))
+                        (line (string-append
+                                "npc:" (car n) "|"
+                                (number->string (car (cdr n))) "|"
+                                (number->string (car (cdr (cdr n)))) "|"
+                                (car (cdr (cdr (cdr n)))) "|"
+                                (car (cdr (cdr (cdr (cdr n)))))
+                                (if (and sprite (string? sprite)
+                                              (> (string-length sprite) 0))
+                                    (string-append "|" sprite "")
+                                    "")
+                                "\n")))
+                        (line (if (and sprite (string? sprite)
+                                       (> (string-length sprite) 0))
+                                  (string-append acc line)
+                                  (string-append acc line))))
+                   (loop (cdr xs) line)))))
          (s2 (let loop ((xs *world-props*) (acc s1))
                (if (null? xs) acc
-                 (let ((p (car xs)))
-                   (loop (cdr xs)
-                         (string-append acc
-                           "prop:" (car p) "|"
-                           (number->string (car (cdr p))) "|"
-                           (number->string (car (cdr (cdr p)))) "\n")))))))
+                 (let* ((p (car xs))
+                        (sprite (prop-sprite-name p))
+                        (line (string-append
+                                "prop:" (car p) "|"
+                                (number->string (car (cdr p))) "|"
+                                (number->string (car (cdr (cdr p))))
+                                (if (and sprite (string? sprite)
+                                              (> (string-length sprite) 0))
+                                    (string-append "|" sprite "")
+                                    "")
+                                "\n")))
+                        (line line))
+                   (loop (cdr xs) (string-append acc line))))))
     s2))
 
 ; Emit Aura source rebinding world state (for set-code / AST hot update).
@@ -200,29 +338,60 @@
                "(set! *w-sky2* " (number->string *w-sky2*) ")\n"
                "(set! *w-floor* " (number->string *w-floor*) ")\n"
                "(set! *w-floor2* " (number->string *w-floor2*) ")\n"
-               "(set! *w-star* " (number->string *w-star*) ")\n"
-               "(set! *world-npcs* (list"))
-         (s1 (let loop ((xs *world-npcs*) (acc s0))
+               "(set! *w-star* " (number->string *w-star*) ")\n"))
+         (s0 (let loop ((xs *world-sprites*) (acc s0))
+               (if (null? xs) (string-append acc "(set! *world-sprites* (list))\n")
+                 (let loop2 ((xs2 xs) (acc2 "(set! *world-sprites* (list"))
+                   (if (null? xs2)
+                       (loop (cdr xs) (string-append acc2 "))\n"))
+                       (let* ((s (car xs2))
+                              (px (car (cdr (cdr (cdr s)))))
+                              (px-str (let loop3 ((ps px) (acc3 ""))
+                                       (if (null? ps) acc3
+                                         (loop3 (cdr ps)
+                                                (string-append acc3
+                                                  (number->string (car ps))
+                                                  (if (null? (cdr ps)) "" " ")))))))
+                         (loop2 (cdr xs2)
+                                (string-append acc2
+                                  "\n  (list \"" (car s) "\" "
+                                  (number->string (car (cdr s))) " "
+                                  (number->string (car (cdr (cdr s))))
+                                  " (list " px-str "))")))))))))
+         (s1 (string-append s0 "(set! *world-npcs* (list"))
+         (s2 (let loop ((xs *world-npcs*) (acc s1))
                (if (null? xs) acc
-                 (let ((n (car xs)))
-                   (loop (cdr xs)
-                         (string-append acc
-                           " (list \"" (car n) "\" "
-                           (number->string (car (cdr n))) " "
-                           (number->string (car (cdr (cdr n)))) " \""
-                           (car (cdr (cdr (cdr n)))) "\" \""
-                           (car (cdr (cdr (cdr (cdr n))))) "\")"))))))
-         (s2 (string-append s1 "))\n(set! *world-props* (list"))
-         (s3 (let loop ((xs *world-props*) (acc s2))
+                 (let* ((n (car xs))
+                        (sprite (npc-sprite-name n))
+                        (sprite-form (if (and sprite (string? sprite)
+                                               (> (string-length sprite) 0))
+                                        (string-append " \"" sprite "\"")
+                                        " #f"))
+                        (entry (string-append
+                                 " (list \"" (car n) "\" "
+                                 (number->string (car (cdr n))) " "
+                                 (number->string (car (cdr (cdr n)))) " \""
+                                 (car (cdr (cdr (cdr n)))) "\" \""
+                                 (car (cdr (cdr (cdr (cdr n))))) "\""
+                                 sprite-form ")")))
+                   (loop (cdr xs) (string-append acc entry))))))
+         (s3 (string-append s2 "))\n(set! *world-props* (list"))
+         (s4 (let loop ((xs *world-props*) (acc s3))
                (if (null? xs) acc
-                 (let ((p (car xs)))
-                   (loop (cdr xs)
-                         (string-append acc
-                           " (list \"" (car p) "\" "
-                           (number->string (car (cdr p))) " "
-                           (number->string (car (cdr (cdr p)))) ")"))))))
-         (s4 (string-append s3 "))\n(set! *world-ok* #t)\n")))
-    s4))
+                 (let* ((p (car xs))
+                        (sprite (prop-sprite-name p))
+                        (sprite-form (if (and sprite (string? sprite)
+                                               (> (string-length sprite) 0))
+                                        (string-append " \"" sprite "\"")
+                                        " #f"))
+                        (entry (string-append
+                                 " (list \"" (car p) "\" "
+                                 (number->string (car (cdr p))) " "
+                                 (number->string (car (cdr (cdr p))))
+                                 sprite-form ")")))
+                   (loop (cdr xs) (string-append acc entry))))))
+         (s5 (string-append s4 "))\n(set! *world-ok* #t)\n")))
+    s5))
 
 ; Play-safe commit: only world-save! (line file). Skip huge to-aura-source
 ; and ast:snapshot under load — both have crashed eval_flat mid-session.
@@ -255,21 +424,24 @@
   (set! *world-theme* "Sunset Meadow")
   (world-set-bg-style! "sunset")
   ; Small cast — readable + safe on large terminals (bg fill is the heavy cost).
+  ; NPC records are 6-field (name x y kind speech sprite); default sprite = #f
+  ; so the hardcoded creature pattern is used.
   (set! *world-npcs*
     (list
-      (list "Bunny" 12 8 "friend" "Hi! Want to play?")
-      (list "Bird" 28 6 "friend" "Chirp! Nice day!")
-      (list "Frog" 40 11 "friend" "Ribbit~")
-      (list "Fox" 18 10 "friend" "Sly hi!")
-      (list "Owl" 50 7 "friend" "Hoo there!")
-      (list "Pip" 35 9 "decor" "Spark!")))
+      (list "Bunny" 12 8 "friend" "Hi! Want to play?" #f)
+      (list "Bird" 28 6 "friend" "Chirp! Nice day!" #f)
+      (list "Frog" 40 11 "friend" "Ribbit~" #f)
+      (list "Fox" 18 10 "friend" "Sly hi!" #f)
+      (list "Owl" 50 7 "friend" "Hoo there!" #f)
+      (list "Pip" 35 9 "decor" "Spark!" #f)))
+  ; Prop records are 4-field (kind x y sprite); default sprite = #f.
   (set! *world-props*
     (list
-      (list "tree" 22 13) (list "tree" 45 13)
-      (list "flower" 15 14) (list "flower" 30 14)
-      (list "crate" 25 12) (list "wall" 10 11)
-      (list "bush" 38 13) (list "rock" 52 13)
-      (list "crate" 48 12) (list "bush" 8 12)))
+      (list "tree" 22 13 #f) (list "tree" 45 13 #f)
+      (list "flower" 15 14 #f) (list "flower" 30 14 #f)
+      (list "crate" 25 12 #f) (list "wall" 10 11 #f)
+      (list "bush" 38 13 #f) (list "rock" 52 13 #f)
+      (list "crate" 48 12 #f) (list "bush" 8 12 #f)))
   (set! *w-sky* (world-rgb 40 30 90))
   (set! *w-sky2* (world-rgb 90 50 70))
   (set! *w-floor* (world-rgb 55 110 65))
@@ -288,12 +460,13 @@
   (world-set-bg-style! "cyber")
   #t)
 
-; Split path fields for npc: Name|x|y|kind|speech  (exactly 4 bars)
+; Split path fields for npc: Name|x|y|kind|speech[|sprite]
+; 5 fields is the default; 6th field (sprite) is optional.
 (define (world-parse-npc line)
   ; line without "npc:" prefix
   (let ((body (substring line 4 (string-length line))))
     (let* ((n (string-length body))
-           (p1 -1) (p2 -1) (p3 -1) (p4 -1))
+           (p1 -1) (p2 -1) (p3 -1) (p4 -1) (p5 -1))
       (let loop ((i 0) (count 0))
         (if (>= i n) #f
           (if (string=? (substring body i (+ i 1)) "|")
@@ -302,38 +475,54 @@
                 (if (= count 1) (set! p2 i) #t)
                 (if (= count 2) (set! p3 i) #t)
                 (if (= count 3) (set! p4 i) #t)
+                (if (= count 4) (set! p5 i) #t)
                 (loop (+ i 1) (+ count 1)))
             (loop (+ i 1) count))))
       (if (or (< p1 0) (< p2 0) (< p3 0) (< p4 0))
           #f
-        (let ((name (substring body 0 p1))
-              (xs (substring body (+ p1 1) p2))
-              (ys (substring body (+ p2 1) p3))
-              (kind (substring body (+ p3 1) p4))
-              (speech (substring body (+ p4 1) n)))
+        (let* ((name (substring body 0 p1))
+               (xs (substring body (+ p1 1) p2))
+               (ys (substring body (+ p2 1) p3))
+               (kind (substring body (+ p3 1) p4))
+               (speech-end (if (< p5 0) n p5))
+               (speech (substring body (+ p4 1) speech-end))
+               (sprite (if (< p5 0) #f (substring body (+ p5 1) n))))
           (list name
                 (string->number xs)
                 (string->number ys)
                 kind
-                speech))))))
+                speech
+                sprite))))))
 
+; Split path fields for prop: kind|x|y[|sprite]
+; 3 fields is the default; 4th field (sprite) is optional.
 (define (world-parse-prop line)
   (let ((body (substring line 5 (string-length line))))
     (let* ((n (string-length body))
-           (p1 -1) (p2 -1))
+           (p1 -1) (p2 -1) (p3 -1))
       (let loop ((i 0) (count 0))
         (if (>= i n) #f
           (if (string=? (substring body i (+ i 1)) "|")
               (begin
                 (if (= count 0) (set! p1 i) #t)
                 (if (= count 1) (set! p2 i) #t)
+                (if (= count 2) (set! p3 i) #t)
                 (loop (+ i 1) (+ count 1)))
             (loop (+ i 1) count))))
-      (if (or (< p1 0) (< p2 0))
-          #f
-        (list (substring body 0 p1)
-              (string->number (substring body (+ p1 1) p2))
-              (string->number (substring body (+ p2 1) n)))))))
+      (cond
+        ((or (< p1 0) (< p2 0)) #f)
+        ((< p3 0)
+         ; 3 fields: kind|x|y
+         (list (substring body 0 p1)
+               (string->number (substring body (+ p1 1) p2))
+               (string->number (substring body (+ p2 1) n))
+               #f))
+        (else
+         ; 4 fields: kind|x|y|sprite
+         (list (substring body 0 p1)
+               (string->number (substring body (+ p1 1) p2))
+               (string->number (substring body (+ p2 1) p3))
+               (substring body (+ p3 1) n)))))))
 
 ; Apply one line into world state.
 (define (world-apply-line! line)
@@ -715,15 +904,26 @@
         (let* ((p (car xs))
                (kind (car p))
                (x (car (cdr p)))
-               (y (car (cdr (cdr p)))))
+               (y (car (cdr (cdr p))))
+               (sprite-name (prop-sprite-name p)))
           (cond
-            ((string=? kind "tree") (world-draw-tree! x y))
-            ((string=? kind "flower") (world-draw-flower! x y))
-            ((string=? kind "crate") (world-draw-crate! x y))
-            ((string=? kind "wall") (world-draw-wall! x y))
-            ((string=? kind "bush") (world-draw-bush! x y))
-            (else (world-draw-rock! x y))))
+            (sprite-name
+             (let ((sprite (world-sprite-get sprite-name)))
+               (if sprite
+                   (world-sprite-draw! sprite x y)
+                   ; sprite not found, fall back to kind dispatch
+                   (world-draw-prop-kind! kind x y))))
+            (else (world-draw-prop-kind! kind x y))))
         (loop (cdr xs))))))
+
+(define (world-draw-prop-kind! kind x y)
+  (cond
+    ((string=? kind "tree") (world-draw-tree! x y))
+    ((string=? kind "flower") (world-draw-flower! x y))
+    ((string=? kind "crate") (world-draw-crate! x y))
+    ((string=? kind "wall") (world-draw-wall! x y))
+    ((string=? kind "bush") (world-draw-bush! x y))
+    (else (world-draw-rock! x y))))
 
 (define (world-draw-tree! x y)
   (let ((green (world-rgb 40 140 60))
@@ -818,6 +1018,7 @@
         (else (cons (world-rgb 255 230 140) (world-rgb 230 190 80)))))))
 
 ; Draw NPCs with bob + wiggle + blink + phase pose.
+; Dynamic sprite (LLM-defined) wins; falls through to hardcode path.
 (define (world-draw-npcs! frame)
   (let loop ((xs *world-npcs*) (i 0))
     (if (null? xs) #t
@@ -832,11 +1033,22 @@
                (x (+ bx wig))
                (y (+ by bob))
                (blink (= (modulo (+ frame (* i 7)) 20) 0)))
-          (world-draw-npc-sprite! x y kind name frame i blink)
+          (world-draw-npc-sprite! x y kind name frame i blink n)
           (draw-text x (+ y 2) name (world-rgb 200 220 255) 0))
         (loop (cdr xs) (+ i 1))))))
 
-(define (world-draw-npc-sprite! x y kind name frame i blink)
+(define (world-draw-npc-sprite! x y kind name frame i blink n)
+  ; Dynamic sprite path (LLM-defined). Static, no bob/wig on the sprite
+  ; itself; the surrounding draw-npcs! already applied bob/wig.
+  (let ((sprite-name (npc-sprite-name n)))
+    (if sprite-name
+        (let ((sprite (world-sprite-get sprite-name)))
+          (if sprite
+              (begin (world-sprite-draw! sprite x y) #t)
+              (world-draw-npc-sprite-hardcode! x y kind name frame i blink)))
+        (world-draw-npc-sprite-hardcode! x y kind name frame i blink))))
+
+(define (world-draw-npc-sprite-hardcode! x y kind name frame i blink)
   (let* ((cols (npc-fur-colors kind name))
          (fur (car cols))
          (fur2 (cdr cols))
@@ -900,7 +1112,7 @@
                          (if (< v (+ y0 1)) (+ y0 1)
                            (if (> v (- y1 4)) (- y1 4) v)))))
               (loop (cdr xs) (+ i 1)
-                    (cons (list name nx ny kind speech) acc))))))
+                    (cons (list name nx ny kind speech (npc-sprite-name n)) acc))))))
       #t)))
 
 ; Nearest friend NPC speech within manhattan dist 6
