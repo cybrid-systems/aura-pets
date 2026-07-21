@@ -59,12 +59,16 @@
     ((string=? face "up") (cons 2 4))
     (else (cons 2 4))))
 
-; ── Compact refined sprite (~7 wide × 4 tall) ──
+; ── Cute compact kitten sprite (~7 wide × 4 tall = 7×8 half-block pixels) ──
 ;
-;   0:   ^   ^     ears
-;   1:  ( o o )    face + eyes + blush
-;   2:   )===(     body / belly
-;   3:   "   "     paws + tail tip
+;   0:   .   .     ear tips (top halves pink inside)
+;   1:  (o o)    big eyes (sclera + pupil + shine)
+;   2:   ∪‿∪     muzzle: tiny pink nose + whiskers
+;   3:   ╰╯╯    paws + tail (STATIC — no wag)
+;
+; Idle pose is calm. Eyes blink only every ~100 frames (natural rate).
+; Tail static; no body shift on idle frames. Action poses (eat/play/
+; sleep/evolve/fight) still animate via phase + ears-perk.
 ;
 (define (draw-pixel-cat! col row blink? mood version pose phase face)
   (let* ((pal (cat-palette version))
@@ -77,9 +81,7 @@
          (fc (if (string? face) face "right"))
          (c (+ col (cat-lean-x fc)))
          (r (+ row (cat-lean-y fc)))
-         (hop (if (or (and (string=? pose "play") (= (modulo phase 2) 0))
-                      (and (string=? pose "fight") (= (modulo phase 2) 0)))
-                  -1 0))
+         (hop (if (or (string=? pose "play") (string=? pose "fight")) -1 0))
          (br (+ r hop))
          (ep (cat-eye-pair fc))
          (e1 (car ep))
@@ -93,41 +95,39 @@
                   ((string=? mood "sad") (rgb 70 90 140))
                   (else (rgb 32 30 48))))
          (lid (rgb 215 155 135))
-         (nose (rgb 255 125 155))
-         (mouth (if (string=? pose "eat") (rgb 255 95 105) (rgb 185 85 105)))
+         (nose (rgb 255 130 165))
+         (mouth (rgb 220 110 130))
+         (whisker (rgb 235 200 200))
          (blush (rgb 255 175 185))
-         (food (rgb 255 215 75))
-         (food2 (rgb 235 165 45))
          (zzz (rgb 175 205 255))
          (spark (rgb 255 250 150))
          (slash (rgb 255 75 95))
          (slash2 (rgb 255 205 110))
-         (wag (if (= (modulo phase 2) 0) 0 1)))
-    ; ── row 0: ears (tiny triangles via half-block) ──
+         (food (rgb 255 215 75))
+         (food2 (rgb 235 165 45)))
+
+    ; ── Row 0 (top + bot halves): ears with pink interior ──
+    ; Each ear = 2 cells, half-blocks split so the pink inner-ear shows
+    ; through. Static (no wobble). Ears perk up only on play/fight.
     (cond
       ((string=? fc "left")
        (begin
-         (px-v (+ c 1) br ear-in acc)
-         (px-v (+ c 2) br hi mid)
-         (px-v (+ c 4) br mid hi)
-         (px-v (+ c 5) br mid ear-in)))
+         (px-v (+ c 1) br ear-in hi)
+         (px-v (+ c 2) br hi ear-in)
+         (px-v (+ c 4) br hi ear-in)
+         (px-v (+ c 5) br ear-in hi)))
       ((string=? fc "right")
        (begin
-         (px-v (+ c 1) br mid ear-in)
-         (px-v (+ c 2) br hi mid)
-         (px-v (+ c 4) br mid hi)
-         (px-v (+ c 5) br acc ear-in)))
+         (px-v (+ c 1) br hi ear-in)
+         (px-v (+ c 2) br ear-in hi)
+         (px-v (+ c 4) br ear-in hi)
+         (px-v (+ c 5) br hi ear-in)))
       (else
        (begin
-         (px-v (+ c 1) br ear-in mid)
-         (px-v (+ c 2) br hi mid)
-         (px-v (+ c 4) br mid hi)
-         (px-v (+ c 5) br mid ear-in)
-         (if (string=? fc "up")
-             (begin
-               (px-v (+ c 1) (- br 1) ear-in hi)
-               (px-v (+ c 5) (- br 1) hi ear-in))
-           #t))))
+         (px-v (+ c 1) br ear-in hi)
+         (px-v (+ c 2) br hi ear-in)
+         (px-v (+ c 4) br hi ear-in)
+         (px-v (+ c 5) br ear-in hi))))
     ; play / fight: ears perk one half-cell up
     (if (or (string=? pose "play") (string=? pose "fight"))
         (begin
@@ -135,15 +135,17 @@
           (px-v (+ c 5) (- br 1) hi ear-in))
       #t)
 
-    ; ── row 1: face crown + cheeks + eyes ──
+    ; ── Row 1 (top + bot halves): face top + cheeks + BIG eyes ──
+    ; Edge shadows for outline feel, blush at cheeks.
     (px-v c (+ br 1) lo mid)
-    (px-v (+ c 1) (+ br 1) blush mid)
-    (px-v (+ c 2) (+ br 1) hi mid)
+    (px-v (+ c 1) (+ br 1) hi blush)
+    (px-v (+ c 2) (+ br 1) hi hi)
     (px-v (+ c 3) (+ br 1) hi hi)
-    (px-v (+ c 4) (+ br 1) hi mid)
-    (px-v (+ c 5) (+ br 1) blush mid)
+    (px-v (+ c 4) (+ br 1) hi hi)
+    (px-v (+ c 5) (+ br 1) blush hi)
     (px-v (+ c 6) (+ br 1) mid lo)
-    ; eyes (overwrite eye cells with sclera/pupil half-blocks)
+    ; Eyes: sclera top, pupil bottom, tiny white shine highlight
+    ; (blink/sleep: lid color = closed eye)
     (if (or blink? sleep?)
         (begin
           (px-v (+ c e1) (+ br 1) lid lid)
@@ -151,22 +153,22 @@
       (begin
         (px-v (+ c e1) (+ br 1) sclera pupil)
         (px-v (+ c e2) (+ br 1) sclera pupil)
-        ; micro highlight
+        ; tiny white "shine" — top-half of pupil for life
         (px-v (+ c e1) (+ br 1) (rgb 255 255 255) pupil)))
 
-    ; ── row 2: muzzle + torso ──
-    (px-v c (+ br 2) lo mid)
-    (px-v (+ c 1) (+ br 2) mid belly)
-    (px-v (+ c 2) (+ br 2) belly mid)
-    ; nose / mouth (center)
-    (if (string=? fc "up")
-        (px-v (+ c 3) (+ br 1) nose mid)
-      (px-v (+ c 3) (+ br 2) nose mouth))
-    (px-v (+ c 4) (+ br 2)
-          (if (string=? pose "eat") food belly) mid)
-    (px-v (+ c 5) (+ br 2) belly mid)
-    (px-v (+ c 6) (+ br 2) mid lo)
-    ; side snout peek when facing L/R
+    ; ── Row 2 (top + bot halves): muzzle + nose + whiskers ──
+    ; Belly color on cheeks (lighter), tiny pink nose center.
+    (px-v c (+ br 2) mid belly)
+    (px-v (+ c 1) (+ br 2) belly blush)
+    (px-v (+ c 2) (+ br 2) belly belly)
+    (px-v (+ c 3) (+ br 2) nose mouth)
+    (px-v (+ c 4) (+ br 2) belly belly)
+    (px-v (+ c 5) (+ br 2) blush belly)
+    (px-v (+ c 6) (+ br 2) belly mid)
+    ; Whiskers — thin lines extending outward from cheeks
+    (px-v c (+ br 2) whisker belly)
+    (px-v (+ c 6) (+ br 2) belly whisker)
+    ; Side snout peek when facing L/R
     (if (string=? fc "right")
         (begin
           (px-v (+ c 6) (+ br 1) mid nose)
@@ -177,39 +179,37 @@
             (px-v c (+ br 2) mouth nose))
         #t))
 
-    ; ── row 3: paws + tail ──
-    (if (or (= (modulo phase 2) 0) sleep?)
-        (begin
-          (px-v (+ c 1) (+ br 3) mid lo)
-          (px-v (+ c 2) (+ br 3) lo mid)
-          (px-v (+ c 4) (+ br 3) mid lo)
-          (px-v (+ c 5) (+ br 3) lo mid))
-      (begin
-        (px-v c (+ br 3) mid lo)
-        (px-v (+ c 1) (+ br 3) lo mid)
-        (px-v (+ c 5) (+ br 3) mid lo)
-        (px-v (+ c 6) (+ br 3) lo mid)))
-    ; belly shadow mid-paw
+    ; ── Row 3 (top + bot halves): body + paws + STATIC tail ──
+    ; Compact body with belly highlight, paws tucked.
+    (px-v (+ c 1) (+ br 3) lo lo)
+    (px-v (+ c 2) (+ br 3) belly belly)
     (px-v (+ c 3) (+ br 3) belly lo)
+    (px-v (+ c 4) (+ br 3) belly belly)
+    (px-v (+ c 5) (+ br 3) lo lo)
+    ; belly shadow mid-row
+    (px-v (+ c 3) (+ br 3) (rgb 245 215 195) belly)
+    ; Paws — small rounded darker tips at edges
+    (px-v (+ c 1) (+ br 3) (rgb 110 75 50) lo)
+    (px-v (+ c 5) (+ br 3) lo (rgb 110 75 50))
 
-    ; tail — compact, opposite of facing
+    ; Tail — STATIC, behind body (opposite of facing). No wag.
     (cond
       ((string=? fc "right")
        (begin
          (px-v c (+ br 2) mid lo)
-         (px-v c (+ br 3 wag) hi mid)))
+         (px-v c (+ br 3) hi mid)))
       ((string=? fc "left")
        (begin
-         (px-v (+ c 6) (+ br 2) mid lo)
-         (px-v (+ c 6) (+ br 3 wag) hi mid)))
+         (px-v (+ c 6) (+ br 2) lo mid)
+         (px-v (+ c 6) (+ br 3) mid hi)))
       ((string=? fc "up")
        (begin
          (px-v (+ c 6) (+ br 3) mid lo)
-         (px-v (+ c 6) (+ br 2 wag) hi mid)))
+         (px-v (+ c 6) (+ br 2) hi mid)))
       (else
        (begin
          (px-v (+ c 6) (+ br 1) mid lo)
-         (px-v (+ c 6) (+ br wag) hi mid))))
+         (px-v (+ c 6) (+ br 2) hi mid))))
 
     ; tiger stripes (tiny)
     (if (= version 2)

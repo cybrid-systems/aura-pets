@@ -139,7 +139,11 @@
 
 (define (draw-speech! pet cat-x cat-y frame-n)
   (let ((pose (anim-kind))
-        (blink (and (string=? (anim-kind) "idle") (= (modulo frame-n 6) 5))))
+        ; Slow blink (~4s at 25fps, natural cat rate). 2 frames long
+        ; so the lid closes & opens. Idle only.
+        (blink (and (string=? (anim-kind) "idle")
+                    (or (= (modulo frame-n 100) 99)
+                        (= (modulo frame-n 100) 0)))))
     (draw-text cat-x (+ cat-y CAT-H)
                (string-append "(" (pose-face pose blink (game-mood-kid pet)) ")")
                SPEECH-BUBBLE BG)
