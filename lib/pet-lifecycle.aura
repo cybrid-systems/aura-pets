@@ -12,6 +12,7 @@
 ; Do NOT call imported procs at top-level init after require (load bug).
 
 (require "std/atomic-swap" all:)
+(require "std/tui/canvas" all:)
 
 (define (pet-field p i)
   (if (= i 0) (car p)
