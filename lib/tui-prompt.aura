@@ -2,34 +2,34 @@
 ;
 ; Features:
 ;   - real cursor index (not just trailing _)
-;   - Mac/PC Backspace: code 127 (DEL) and 8 (BS) — NOT \x escapes (Aura
-;     does not parse \xHH; "\x7f" is the 3-char string "x7f")
-;   - Emacs-style line editing
-;   - left/right arrows, Home/End when terminal sends them
+;   - Mac/PC Backspace: code 127 (DEL) and 8 (BS)
+;   - Emacs-style line editing (C-a/e/b/f/k/u/w, Home/End)
+;   - Prompt history: Up/Down when non-empty; C-p / C-n always
+;     (empty-line arrows still move the pet — game feel)
+;   - Slash autocomplete: type /… then Tab; status shows matches
+;   - Ghost completion after caret when unique / prefix match
+;   - UTF-8 codepoint-aware cursor
 ;
-; Emacs map (empty-line: 1/2/3 care + Space fire — letters type normally):
+; Emacs map:
 ;   C-a beginning   C-e end
 ;   C-b left        C-f right
-;   C-d empty → quit (EOF); non-empty → delete-fwd
-;   C-h / DEL / BS backspace
-;   C-k kill-to-end C-u kill-line
-;   C-w kill-word-back
-;   Enter submit
-; Quit (play): Ctrl+D (empty line) or double Ctrl+C (engine "quit" tag).
-;   Single empty-line "q" is off when *prompt-no-q-quit?* is #t.
-; UTF-8: Chinese and other multi-byte keys accepted; cursor is codepoint-aware.
+;   C-p history↑    C-n history↓
+;   C-d empty → quit; non-empty → delete-fwd
+;   Tab slash-complete
+;   Enter submit (+ push history)
+; Quit: Ctrl+D empty, or double Ctrl+C (app). q-quit off if *prompt-no-q-quit?*
 ;
 ; API:
-;   (prompt-init! y)           ; y = top row of 3-line Grok-style box
+;   (prompt-init! y)
+;   (prompt-set-commands! names)  ; list of "brain" "save" … (no slash)
 ;   (prompt-set-log! msg)
-;   (prompt-buf) (prompt-log) (prompt-hot) (prompt-cursor)
+;   (prompt-buf) (prompt-log) (prompt-hot) (prompt-hint)
 ;   (prompt-handle e) → "quit"|"submit"|"edit"|"hot"|#f
 ;   (prompt-take-submit!)
 ;   (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
-;   (draw-utf8! col row str fg bg)  ; codepoint-safe colored text
-; Box (Grok Build–like):
-;   ┌─ status ──────────────────────────┐
-;   │ > typed input_                    │
+; Box:
+;   ┌─ status / completion hints ───────┐
+;   │ > /bra█in_   (ghost)              │
 ;   └───────────────────────────────────┘
 
 (define *prompt-y* 0)
@@ -53,10 +53,33 @@
 ; When #t, empty-line "q"/"Q" is not quit (type "q" normally). Play and
 ; cyber-live set #t — quit is Ctrl+D (empty) or double Ctrl+C (app-level).
 (define *prompt-no-q-quit?* #f)
+; Command history (newest first). idx -1 = live draft.
+(define *prompt-hist* '())
+(define *prompt-hist-idx* -1)
+(define *prompt-draft* "x")
+(define *prompt-hist-max* 40)
+; Slash command names without leading / (for Tab complete).
+(define *prompt-cmds*
+  (list "help" "brain" "diff" "mutate" "guide" "npc" "save" "load" "new"
+        "export" "eat" "feed" "play" "sleep" "grow" "evolve" "back" "fight"
+        "fire" "heal" "status" "stats" "form" "talk" "world" "bg" "weapon"
+        "teach" "quit" "say" "info" "rewrite" "genome" "code" "temper"))
+; Completion hint for status line + ghost suffix after cursor.
+(define *prompt-hint* "x")
+(define *prompt-ghost* "x")
+; Cycle index when multiple Tab matches.
+(define *prompt-tab-i* 0)
 
 (define (prompt-set-width! n)
   (set! *prompt-width* n)
   #t)
+
+(define (prompt-set-commands! names)
+  (set! *prompt-cmds* names)
+  #t)
+
+(define (prompt-hint) *prompt-hint*)
+(define (prompt-ghost) *prompt-ghost*)
 
 (define (prompt-width) *prompt-width*)
 
@@ -86,7 +109,13 @@
   (set! *prompt-submit* (prompt-empty))
   (set! *prompt-hot* (prompt-empty))
   (set! *prompt-cursor* 0)
-  (set! *prompt-log* "C-d quit · 2x C-c quit · Space fire · /help")
+  (set! *prompt-hist-idx* -1)
+  (set! *prompt-draft* (prompt-empty))
+  (set! *prompt-hint* (prompt-empty))
+  (set! *prompt-ghost* (prompt-empty))
+  (set! *prompt-tab-i* 0)
+  ; Keep history across re-init of same session (don't clear *prompt-hist*).
+  (set! *prompt-log* "Tab complete · ↑↓ history · /help · C-d quit")
   #t)
 
 (define (prompt-set-log! msg)
@@ -107,7 +136,212 @@
 (define (prompt-clear-buf!)
   (set! *prompt-buf* (prompt-empty))
   (set! *prompt-cursor* 0)
+  (set! *prompt-hist-idx* -1)
+  (set! *prompt-draft* (prompt-empty))
+  (set! *prompt-ghost* (prompt-empty))
+  (set! *prompt-hint* (prompt-empty))
+  (set! *prompt-tab-i* 0)
   #t)
+
+(define (prompt-set-buf! s)
+  (set! *prompt-buf* (if (string? s) s (prompt-empty)))
+  (set! *prompt-cursor* (string-length *prompt-buf*))
+  (prompt-refresh-complete!)
+  #t)
+
+; ── History (newest first) ──
+(define (prompt-hist-len)
+  (length *prompt-hist*))
+
+(define (prompt-hist-nth i)
+  (let loop ((xs *prompt-hist*) (j 0))
+    (if (null? xs) (prompt-empty)
+      (if (= j i) (car xs)
+        (loop (cdr xs) (+ j 1))))))
+
+(define (prompt-hist-push! s)
+  (if (or (not (string? s)) (= (string-length s) 0))
+      #f
+    (begin
+      ; Skip consecutive duplicate.
+      (if (and (pair? *prompt-hist*)
+               (string=? (car *prompt-hist*) s))
+          #t
+        (begin
+          (set! *prompt-hist* (cons s *prompt-hist*))
+          (if (> (length *prompt-hist*) *prompt-hist-max*)
+              (set! *prompt-hist*
+                (let loop ((xs *prompt-hist*) (acc '()) (n 0))
+                  (if (or (null? xs) (>= n *prompt-hist-max*))
+                      (reverse acc)
+                    (loop (cdr xs) (cons (car xs) acc) (+ n 1)))))
+            #t)))
+      (set! *prompt-hist-idx* -1)
+      (set! *prompt-draft* (prompt-empty))
+      #t)))
+
+(define (prompt-hist-up!)
+  (let ((n (prompt-hist-len)))
+    (if (= n 0)
+        #f
+      (begin
+        (if (< *prompt-hist-idx* 0)
+            (set! *prompt-draft* *prompt-buf*)
+          #t)
+        (if (< *prompt-hist-idx* (- n 1))
+            (set! *prompt-hist-idx* (+ *prompt-hist-idx* 1))
+          #t)
+        (prompt-set-buf! (prompt-hist-nth *prompt-hist-idx*))
+        #t))))
+
+(define (prompt-hist-down!)
+  (if (< *prompt-hist-idx* 0)
+      #f
+    (begin
+      (set! *prompt-hist-idx* (- *prompt-hist-idx* 1))
+      (if (< *prompt-hist-idx* 0)
+          (begin
+            (prompt-set-buf! *prompt-draft*)
+            (set! *prompt-draft* (prompt-empty)))
+        (prompt-set-buf! (prompt-hist-nth *prompt-hist-idx*)))
+      #t)))
+
+; ── Slash completion ──
+(define (prompt-starts-with? s pre)
+  (let ((ns (string-length s))
+        (np (string-length pre)))
+    (if (> np ns) #f
+      (string=? (substring s 0 np) pre))))
+
+; First token after optional leading / (no spaces yet for cmd complete).
+(define (prompt-slash-token)
+  (let ((s *prompt-buf*)
+        (n (string-length *prompt-buf*)))
+    (if (or (= n 0) (not (string=? (substring s 0 1) "/")))
+        #f
+      (let loop ((i 1))
+        (if (>= i n)
+            (substring s 1 n)
+          (if (string=? (substring s i (+ i 1)) " ")
+              #f  ; already has args — no cmd complete
+            (loop (+ i 1))))))))
+
+(define (prompt-cmd-matches prefix)
+  (let ((p (if (string? prefix) prefix (prompt-empty))))
+    (let loop ((xs *prompt-cmds*) (acc '()))
+      (if (null? xs)
+          (reverse acc)
+        (if (prompt-starts-with? (car xs) p)
+            (loop (cdr xs) (cons (car xs) acc))
+          (loop (cdr xs) acc))))))
+
+(define (prompt-char-ok-all? strs i ch)
+  (let loop ((ys strs))
+    (if (null? ys)
+        #t
+      (let ((b (car ys))
+            (nb (string-length (car ys))))
+        (if (and (> nb i) (string=? (substring b i (+ i 1)) ch))
+            (loop (cdr ys))
+          #f)))))
+
+(define (prompt-common-prefix strs)
+  (cond
+    ((null? strs) (prompt-empty))
+    ((null? (cdr strs)) (car strs))
+    (else
+     (let ((a (car strs))
+           (na (string-length (car strs))))
+       (let loop ((i 0))
+         (if (>= i na)
+             (substring a 0 i)
+           (let ((ch (substring a i (+ i 1))))
+             (if (prompt-char-ok-all? (cdr strs) i ch)
+                 (loop (+ i 1))
+               (substring a 0 i)))))))))
+
+(define (prompt-join-cmds xs maxn)
+  (let loop ((ys xs) (s (prompt-empty)) (c 0))
+    (if (or (null? ys) (>= c maxn))
+        (if (and (not (null? ys)) (>= c maxn))
+            (string-append s " …")
+          s)
+      (loop (cdr ys)
+            (if (= (string-length s) 0)
+                (string-append "/" (car ys))
+              (string-append s " /" (car ys)))
+            (+ c 1)))))
+
+(define (prompt-refresh-complete!)
+  (let ((tok (prompt-slash-token)))
+    (if (not tok)
+        (begin
+          (set! *prompt-hint* (prompt-empty))
+          (set! *prompt-ghost* (prompt-empty))
+          (set! *prompt-tab-i* 0)
+          #f)
+      (let ((ms (prompt-cmd-matches tok)))
+        (cond
+          ((null? ms)
+           (set! *prompt-hint* (prompt-empty))
+           (set! *prompt-ghost* (prompt-empty))
+           #f)
+          ((null? (cdr ms))
+           (let* ((full (car ms))
+                  (tn (string-length tok))
+                  (fn (string-length full)))
+             (set! *prompt-ghost*
+               (if (>= tn fn) (prompt-empty) (substring full tn fn)))
+             (set! *prompt-hint*
+               (string-append "Tab → /" full))
+             #t))
+          (else
+           (let ((com (prompt-common-prefix ms)))
+             (set! *prompt-ghost*
+               (let ((tn (string-length tok))
+                     (cn (string-length com)))
+                 (if (>= tn cn) (prompt-empty)
+                   (substring com tn cn))))
+             (set! *prompt-hint*
+               (string-append "Tab · " (prompt-join-cmds ms 5)))
+             #t)))))))
+
+(define (prompt-apply-complete! name)
+  (set! *prompt-buf* (string-append "/" name " "))
+  (set! *prompt-cursor* (string-length *prompt-buf*))
+  (set! *prompt-tab-i* 0)
+  (prompt-refresh-complete!)
+  #t)
+
+; Tab: complete common prefix, or cycle unique matches.
+(define (prompt-tab-complete!)
+  (let ((tok (prompt-slash-token)))
+    (if (not tok)
+        #f
+      (let ((ms (prompt-cmd-matches tok)))
+        (cond
+          ((null? ms) #f)
+          ((null? (cdr ms))
+           (prompt-apply-complete! (car ms)))
+          (else
+           (let* ((com (prompt-common-prefix ms))
+                  (tn (string-length tok))
+                  (cn (string-length com)))
+             (if (> cn tn)
+                 (begin
+                   (set! *prompt-buf* (string-append "/" com))
+                   (set! *prompt-cursor* (string-length *prompt-buf*))
+                   (set! *prompt-tab-i* 0)
+                   (prompt-refresh-complete!)
+                   #t)
+               ; Cycle through matches
+               (let* ((n (length ms))
+                      (i (modulo *prompt-tab-i* n))
+                      (pick (let loop ((xs ms) (j 0))
+                              (if (= j i) (car xs)
+                                (loop (cdr xs) (+ j 1))))))
+                 (set! *prompt-tab-i* (+ i 1))
+                 (prompt-apply-complete! pick))))))))))
 
 ; First byte of a 1-byte string, else -1. Aura strings are byte-oriented.
 (define (prompt-ch-code ch)
@@ -207,9 +441,13 @@
     (if (or (<= clen 0) (> (+ blen clen) *prompt-max-bytes*))
         #f
       (begin
+        ; Typing leaves history browse mode.
+        (set! *prompt-hist-idx* -1)
+        (set! *prompt-tab-i* 0)
         (set! *prompt-buf*
           (string-append (prompt-left-part) ch (prompt-right-part)))
         (set! *prompt-cursor* (+ *prompt-cursor* clen))
+        (prompt-refresh-complete!)
         #t))))
 
 (define (prompt-backspace!)
@@ -218,11 +456,14 @@
     (let* ((c *prompt-cursor*)
            (n (string-length *prompt-buf*))
            (start (prompt-cp-start-before *prompt-buf* c)))
+      (set! *prompt-hist-idx* -1)
+      (set! *prompt-tab-i* 0)
       (set! *prompt-buf*
         (string-append
           (if (<= start 0) (prompt-empty) (substring *prompt-buf* 0 start))
           (if (>= c n) (prompt-empty) (substring *prompt-buf* c n))))
       (set! *prompt-cursor* start)
+      (prompt-refresh-complete!)
       #t)))
 
 (define (prompt-delete-fwd!)
@@ -231,17 +472,21 @@
     (if (>= c n)
         #f
       (let ((len (prompt-cp-len *prompt-buf* c)))
+        (set! *prompt-hist-idx* -1)
+        (set! *prompt-tab-i* 0)
         (set! *prompt-buf*
           (string-append
             (if (<= c 0) (prompt-empty) (substring *prompt-buf* 0 c))
             (if (>= (+ c len) n)
                 (prompt-empty)
               (substring *prompt-buf* (+ c len) n))))
+        (prompt-refresh-complete!)
         #t))))
 
 (define (prompt-kill-to-end!)
   (set! *prompt-buf* (prompt-left-part))
   (prompt-clamp-cursor!)
+  (prompt-refresh-complete!)
   #t)
 
 (define (prompt-kill-line!)
@@ -393,6 +638,18 @@
 (define (prompt-is-kill-word? ch)
   (= (prompt-ch-code ch) 23))     ; C-w
 
+(define (prompt-is-tab? ch)
+  (or (= (prompt-ch-code ch) 9)
+      (string=? ch "Tab")
+      (string=? ch "\t")))
+
+; C-p = 16, C-n = 14 (Emacs history)
+(define (prompt-is-hist-up? ch)
+  (= (prompt-ch-code ch) 16))
+
+(define (prompt-is-hist-down? ch)
+  (= (prompt-ch-code ch) 14))
+
 ; Empty-line hotkeys: care digits + Space fire (tank mode).
 (define (prompt-is-hot? ch)
   (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
@@ -413,13 +670,31 @@
       (if (not (string=? (car e) "key"))
           #f
         (let ((ch (cdr e))
-              (empty? (= (string-length *prompt-buf*) 0)))
+              (empty? (= (string-length *prompt-buf*) 0))
+              (slash? (and (> (string-length *prompt-buf*) 0)
+                           (string=? (substring *prompt-buf* 0 1) "/")))
+              (hist-browse? (>= *prompt-hist-idx* 0)))
           (cond
             ((prompt-is-enter? ch)
+             (prompt-hist-push! *prompt-buf*)
              (set! *prompt-submit* *prompt-buf*)
              (set! *prompt-buf* (prompt-empty))
              (set! *prompt-cursor* 0)
+             (set! *prompt-ghost* (prompt-empty))
+             (set! *prompt-hint* (prompt-empty))
+             (set! *prompt-tab-i* 0)
              "submit")
+            ((prompt-is-tab? ch)
+             (if (prompt-tab-complete!) "edit" #f))
+            ((or (prompt-is-hist-up? ch)
+                 ; Non-empty or browsing: ↑ = history (Grok-style)
+                 (and (prompt-is-up? ch)
+                      (or (not empty?) hist-browse? slash?)))
+             (if (prompt-hist-up!) "edit" #f))
+            ((or (prompt-is-hist-down? ch)
+                 (and (prompt-is-down? ch)
+                      (or (not empty?) hist-browse? slash?)))
+             (if (prompt-hist-down!) "edit" #f))
             ((prompt-is-bs? ch)
              (prompt-backspace!)
              "edit")
@@ -429,11 +704,11 @@
             ((prompt-is-del-fwd? ch)
              (prompt-delete-fwd!)
              "edit")
-            ; Empty line: arrows navigate the pet (not the caret).
-            ((and empty? (prompt-is-left? ch)) "nav-left")
-            ((and empty? (prompt-is-right? ch)) "nav-right")
-            ((and empty? (prompt-is-up? ch)) "nav-up")
-            ((and empty? (prompt-is-down? ch)) "nav-down")
+            ; Empty line (not browsing hist): arrows navigate the pet.
+            ((and empty? (not hist-browse?) (prompt-is-left? ch)) "nav-left")
+            ((and empty? (not hist-browse?) (prompt-is-right? ch)) "nav-right")
+            ((and empty? (not hist-browse?) (prompt-is-up? ch)) "nav-up")
+            ((and empty? (not hist-browse?) (prompt-is-down? ch)) "nav-down")
             ((prompt-is-left? ch)
              (prompt-move! -1)
              "edit")
@@ -454,6 +729,7 @@
              "edit")
             ((prompt-is-kill-word? ch)
              (prompt-kill-word-back!)
+             (prompt-refresh-complete!)
              "edit")
             ((and (not *prompt-no-q-quit?*) empty? (or (string=? ch "q") (string=? ch "Q")))
              "quit")
@@ -520,7 +796,11 @@
                 (if (= i 0) (prompt-empty) (substring str 0 i))
               (loop (+ i len) (+ cols w)))))))))
 
+; Dim color for ghost completion (soft gray-cyan).
+(define *prompt-ghost-fg* 56754)
+
 ; Grok Build–style bordered input box (3 rows at *prompt-y*..+2).
+; Status prefers live slash-hint when present (completion chrome).
 (define (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
   (let* ((y0 *prompt-y*)
          (y1 (+ y0 1))
@@ -541,23 +821,27 @@
          (rest (if (<= rlen cur-len)
                    (prompt-empty)
                  (substring right cur-len rlen)))
+         (ghost *prompt-ghost*)
+         (gn (string-length ghost))
          ; input starts after "│> "
          (in-x (+ x0 3))
          (in-max (- inner-w 3))
-         (left-cols (prompt-cp-count left))
-         (log-show (prompt-clip-cols *prompt-log* (- inner-w 2))))
-    ; ── top border with status title ──
+         (status
+           (if (> (string-length *prompt-hint*) 0)
+               *prompt-hint*
+             *prompt-log*))
+         (log-show (prompt-clip-cols status (- inner-w 2))))
+    ; ── top border with status / completion title ──
     (tui:cell x0 y0 "┌" bfg bbg 0)
     (prompt-hline! (+ x0 1) y0 inner-w "─" bfg bbg)
     (tui:cell x1 y0 "┐" bfg bbg 0)
-    ; status sits on the top rule (Grok-like chrome)
     (prompt-put-str! (+ x0 2) y0 log-show log-fg bbg 0)
     ; ── middle: input line ──
     (tui:cell x0 y1 "│" bfg bbg 0)
     (prompt-clear-run! (+ x0 1) y1 inner-w in-fg bbg)
     (tui:cell x1 y1 "│" bfg bbg 0)
     (prompt-put-str! (+ x0 1) y1 "> " in-fg bbg 1)
-    ; typed text + block cursor (clip if overlong)
+    ; typed text + block cursor + optional ghost completion
     (let* ((left-show (prompt-clip-cols left in-max))
            (lc (prompt-cp-count left-show))
            (cur-x (+ in-x lc)))
@@ -565,15 +849,21 @@
       (if (< cur-x x1)
           (begin
             (if *prompt-blink-on*
-                ; visible: inverse block (black char on cursor-bg)
                 (tui:cell cur-x y1 cur-ch cursor-fg cursor-bg 1)
-                ; hidden: empty cell matching prompt-fill bg (no block)
-                (tui:cell cur-x y1 " " cursor-fg *prompt-fill* 0))
-            (if (< (+ cur-x 1) x1)
-                (prompt-put-str! (+ cur-x 1) y1
-                                 (prompt-clip-cols rest (- x1 (+ cur-x 1)))
-                                 in-fg bbg 0)
-              #t))
+              (tui:cell cur-x y1 " " cursor-fg *prompt-fill* 0))
+            ; Ghost: dim suffix of unique/common slash completion
+            (let ((after (+ cur-x 1)))
+              (if (and (> gn 0) (< after x1) (= rlen 0))
+                  (let ((gshow
+                          (prompt-clip-cols ghost (- x1 after))))
+                    (prompt-put-str! after y1 gshow
+                                    *prompt-ghost-fg* bbg 0)
+                    #t)
+                (if (< after x1)
+                    (prompt-put-str! after y1
+                                     (prompt-clip-cols rest (- x1 after))
+                                     in-fg bbg 0)
+                  #t))))
         #t))
     ; ── bottom border ──
     (tui:cell x0 y2 "└" bfg bbg 0)

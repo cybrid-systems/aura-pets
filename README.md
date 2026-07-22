@@ -55,6 +55,17 @@ cd /path/to/aura-pets
 
 Default `./run.sh play` starts **new**; use `--continue` or in-game `/load` to resume.
 
+### Prompt (Grok-style)
+
+| Key | Action |
+|-----|--------|
+| **Tab** | Slash complete (`/br` → `/brain `); cycle matches |
+| **↑ / ↓** | History when line non-empty or starts with `/` |
+| **C-p / C-n** | History always (empty line still OK) |
+| Empty **↑↓←→** | Move pet (game nav) |
+| Status line | Live completion hints (`Tab → /brain`) |
+| Ghost text | Dim suffix after cursor for unique match |
+
 ### Pure Aura LLM / worldgen (no Python required)
 
 NL + world generation run as **Aura** modules:
