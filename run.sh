@@ -42,7 +42,8 @@ MODE="auto"
 # and live-dispatch close over prompt-handle at load time. Loading prompt
 # after the example left every key act=nil (events arrived, handler unbound).
 # pet-genome after edsl; entity after world; pet-save last among life libs.
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/entity.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-genome.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-save.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
+# pet-tutorial after pet-game (game-set-speech!), before pet-cmd (tut hooks).
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/entity.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-genome.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-save.aura\") (load \"$SCRIPT_DIR/lib/pet-tutorial.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
 CONTINUE_PLAY=0
@@ -64,6 +65,11 @@ Aura Pets
   ./run.sh play --log FILE   debug log path
 
 Play: arrows move | 1 2 3 care | Ctrl+D quit | 2× Ctrl+C quit
+  Guide (friendly, not forced):
+    /tutorial            interactive menu (cmds + how-to)
+    /tutorial care|code  jump topic · /n next · /b back
+    /tutorial try        optional soft walkthrough
+    /help                short command index
   Living code:
     /brain /diff /mutate /guide lazy|fierce
     /npc Bunny set hp 20 | /npc kind=enemy trait fierce +2

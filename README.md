@@ -21,6 +21,11 @@ cd /path/to/aura-pets
 | **3** | Sleep + Zzz anim |
 | **Ctrl+D** (empty line) | Bye |
 | **Ctrl+C** twice | Bye (second press within ~2s) |
+| `/tutorial` | **Interactive guide** — browse commands & how-to |
+| `/tutorial care` | Jump topic: `basics` `care` `code` `fight` `world` `save` |
+| `/n` `/b` | Next / previous guide page |
+| `/tutorial try` | Optional soft walkthrough (never blocks play) |
+| `/help` | Short command index (`/help care` → same as `/tut care`) |
 | `/eat` `/play` `/sleep` | Care (also `1`/`2`/`3`) |
 | `/grow` | Next form: Kitten→Pink→Tiger→Shadow→Dragon |
 | `/back` | Previous form |
@@ -53,7 +58,7 @@ cd /path/to/aura-pets
 | Share export | `~/.aura-pets/exports/session.aura` |
 | Debug copy | `/tmp/aura-pets-session.aura` |
 
-Default `./run.sh play` starts **new**; use `--continue` or in-game `/load` to resume.
+Default `./run.sh play` starts **new** with a short tip: type **`/tutorial`** for a friendly interactive guide (topics + `/n`/`/b` flip). Free play is always open — nothing is forced.
 
 ### Prompt (Grok-style)
 

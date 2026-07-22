@@ -147,7 +147,7 @@
 
     ((or (string=? cmd "mutate") (string=? cmd "evolve-code"))
      (set! *speech* (try (genome-force-mutate!) (catch (e) "mutate failed")))
-     (set! *last-act* "evolve-code")
+     (set! *last-act* "mutate")
      (anim-start! "evolve" 12)
      (cons #t pet))
 

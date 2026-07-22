@@ -119,11 +119,16 @@
   (draw-text 44 1 "E" BAR-FG BG)
   (draw-text 45 1 (bar (pet-energy pet)) BAR-FG BG)
   (draw-text 1 2
-             (string-append "Space fire | /bg cyber | ["
-                            (world-theme) " bg="
-                            (world-bg-style) " n="
-                            (number->string (world-npc-count))
-                            (if (nl-busy?) " ...]" "]"))
+             (string-append
+               (let ((th (try (tut-hud) (catch (e) ""))))
+                 (if (and (string? th) (> (string-length th) 0))
+                     (string-append th " | ")
+                   ""))
+               "Space fire | /bg cyber | ["
+               (world-theme) " bg="
+               (world-bg-style) " n="
+               (number->string (world-npc-count))
+               (if (nl-busy?) " ...]" "]"))
              HUD-DIM BG)
   #t)
 
@@ -321,6 +326,13 @@
             (game-set-speech! "Dash!")
             (anim-start! "play" 4))
         #t)
+      ; Tutorial beat 1: first real move advances (dash still counts as move)
+      (try
+        (let ((msg (tut-on-act! "move")))
+          (if msg
+              (prompt-set-log! msg)
+            #f))
+        (catch (e) #f))
       #t)))
 
 ; Input first, non-blocking drain, short wait only after empty queue.
@@ -617,14 +629,22 @@
                                " npcs=" (number->string (world-npc-count))
                                " async=0"))
   (plog-flush!)
-  (game-set-speech!
-    (string-append "Welcome! " (world-theme)
-                   " | /brain /save /load /new | C-d quit"))
-  (prompt-set-log! (game-speech))
   (try (plog "genome" (genome-line)) (catch (e) #f))
   ; Optional continue: AURA_PETS_CONTINUE=1 or ./run.sh play --continue
-  ; (overrides welcome speech when a save is restored)
-  (try (play-maybe-continue!) (catch (e) #f))
+  ; New life: friendly tip pointing at interactive /tutorial guide (not a forced tour).
+  (if (try (play-maybe-continue!) (catch (e) #f))
+      (try (tut-off!) (catch (e) #f))
+    (try
+      (begin
+        (tut-welcome!)
+        (prompt-set-log! (game-speech))
+        (plog "tutorial" "welcome-tip"))
+      (catch (e)
+        (begin
+          (game-set-speech!
+            (string-append "Welcome! " (world-theme)
+                           " | /tutorial for guide | C-d quit"))
+          (prompt-set-log! (game-speech))))))
   (plog "ready" "entering-play-loop")
   (plog-flush!)
   ; Frame cap to calm flicker on terminal TUI. Aura has no tui:sleep

@@ -60,10 +60,12 @@
 (define *prompt-hist-max* 40)
 ; Slash command names without leading / (for Tab complete).
 (define *prompt-cmds*
-  (list "help" "brain" "diff" "mutate" "guide" "npc" "save" "load" "new"
-        "export" "eat" "feed" "play" "sleep" "grow" "evolve" "back" "fight"
-        "fire" "heal" "status" "stats" "form" "talk" "world" "bg" "weapon"
-        "teach" "quit" "say" "info" "rewrite" "genome" "code" "temper"))
+  (list "help" "tutorial" "tut" "howto" "skip" "close" "next" "back"
+        "brain" "diff" "mutate" "guide" "npc" "save" "load" "new"
+        "export" "eat" "feed" "play" "sleep" "grow" "evolve" "fight"
+        "fire" "heal" "status" "stats" "form" "talk" "world" "bg"
+        "weapon" "teach" "quit" "say" "info" "rewrite" "genome" "code"
+        "temper"))
 ; Completion hint for status line + ghost suffix after cursor.
 (define *prompt-hint* "x")
 (define *prompt-ghost* "x")

@@ -1,0 +1,285 @@
+; lib/pet-tutorial.aura — friendly interactive play guide (commands + how-to).
+;
+; Browse topics in-game — not a forced quest:
+;   /tutorial              home menu
+;   /tutorial care         jump by name
+;   /tutorial 3            jump by number
+;   /n  /tutorial next     next page
+;   /b  /tutorial back     previous page
+;   /tutorial try          optional soft walkthrough
+;   /tutorial close        close guide
+;
+; Load after pet-game (game-set-speech!), before pet-cmd.
+; Play-safe: pure data, no set-code.
+; Note: Aura symbols/eq? are unreliable — use strings only.
+
+(define *tut-page* 0)
+(define *tut-open?* #f)
+(define *tut-try* -2)
+(define *tut-try-total* 6)
+
+(define (tut-empty)
+  (substring "x" 0 0))
+
+(define (tut-page-count) 7)
+
+(define (tut-page-title i)
+  (cond
+    ((= i 0) "menu")
+    ((= i 1) "basics")
+    ((= i 2) "care")
+    ((= i 3) "code")
+    ((= i 4) "fight")
+    ((= i 5) "world")
+    ((= i 6) "save")
+    (else "menu")))
+
+(define (tut-page-body i)
+  (cond
+    ((= i 0)
+     "Guide: 1 basics  2 care  3 code  4 fight  5 world  6 save  | /n next · /b prev · /tut care")
+    ((= i 1)
+     "Basics: arrows move · empty-line 1/2/3 care · Tab completes /cmds · C-d quit · 2x C-c quit")
+    ((= i 2)
+     "Care: 1 eat · 2 play · 3 sleep · love grows · /grow morph · teach feed Hi  (try it!)")
+    ((= i 3)
+     "Living code: /brain see source · /mutate rewrite · /diff before/after · /guide lazy|fierce")
+    ((= i 4)
+     "Fight: Space fire · /weapon shot|beam · /fight melee · /heal · /grow unlocks stronger guns")
+    ((= i 5)
+     "World: /npc Bunny · /npc @near set hp 20 · /talk · free text e.g. snowy park · /bg cyber")
+    ((= i 6)
+     "Life: /save keep · /load resume · /new fresh · quit auto-saves · --continue on start")
+    (else
+     "Type /tutorial for the guide menu")))
+
+(define (tut-page-line i)
+  (if (= i 0)
+      (tut-page-body 0)
+    (string-append
+      "[" (number->string i) "/" (number->string (- (tut-page-count) 1))
+      " " (tut-page-title i) "] "
+      (tut-page-body i))))
+
+; Resolve topic → page index (0..6), or special: -1 next, -2 back, -3 try, -4 close, -5 bad
+(define (tut-resolve-topic s)
+  (let ((t (if (string? s) s (tut-empty))))
+    (cond
+      ((= (string-length t) 0) 0)
+      ((or (string=? t "0") (string=? t "menu") (string=? t "home")
+           (string=? t "index") (string=? t "help"))
+       0)
+      ((or (string=? t "1") (string=? t "basics") (string=? t "basic")
+           (string=? t "start") (string=? t "keys") (string=? t "move"))
+       1)
+      ((or (string=? t "2") (string=? t "care") (string=? t "feed")
+           (string=? t "pet") (string=? t "love"))
+       2)
+      ((or (string=? t "3") (string=? t "code") (string=? t "brain")
+           (string=? t "genome") (string=? t "mutate") (string=? t "diff"))
+       3)
+      ((or (string=? t "4") (string=? t "fight") (string=? t "combat")
+           (string=? t "battle") (string=? t "fire") (string=? t "tank"))
+       4)
+      ((or (string=? t "5") (string=? t "world") (string=? t "npc")
+           (string=? t "scene") (string=? t "map"))
+       5)
+      ((or (string=? t "6") (string=? t "save") (string=? t "load")
+           (string=? t "life") (string=? t "continue"))
+       6)
+      ((or (string=? t "next") (string=? t "n") (string=? t "more")
+           (string=? t ">") (string=? t "forward"))
+       -1)
+      ((or (string=? t "back") (string=? t "b") (string=? t "prev")
+           (string=? t "p") (string=? t "<") (string=? t "up"))
+       -2)
+      ((or (string=? t "try") (string=? t "walk") (string=? t "tour")
+           (string=? t "play") (string=? t "quest"))
+       -3)
+      ((or (string=? t "close") (string=? t "done") (string=? t "exit")
+           (string=? t "off") (string=? t "skip"))
+       -4)
+      (else -5))))
+
+(define (tut-clamp-page i)
+  (let ((n (tut-page-count)))
+    (if (< i 0) 0
+      (if (>= i n) (- n 1) i))))
+
+(define (tut-show-page! i)
+  (set! *tut-page* (tut-clamp-page i))
+  (set! *tut-open?* #t)
+  (game-set-speech! (tut-page-line *tut-page*))
+  (game-speech))
+
+(define (tut-next!)
+  (let ((n (+ *tut-page* 1)))
+    (if (>= n (tut-page-count))
+        (tut-show-page! 0)
+      (tut-show-page! n))))
+
+(define (tut-back!)
+  (let ((n (- *tut-page* 1)))
+    (if (< n 0)
+        (tut-show-page! (- (tut-page-count) 1))
+      (tut-show-page! n))))
+
+(define (tut-close!)
+  (set! *tut-open?* #f)
+  (set! *tut-try* -2)
+  (game-set-speech! "Guide closed. Type /tutorial anytime · /help for short list")
+  (game-speech))
+
+(define (tut-hud)
+  (if *tut-open?*
+      (string-append
+        "guide "
+        (tut-page-title *tut-page*)
+        " "
+        (number->string *tut-page*)
+        "/"
+        (number->string (- (tut-page-count) 1))
+        " · /n /b /tut")
+    (if (and (>= *tut-try* 0) (< *tut-try* *tut-try-total*))
+        (string-append "try "
+                       (number->string (+ *tut-try* 1))
+                       "/"
+                       (number->string *tut-try-total*)
+                       " · /tut close")
+      (tut-empty))))
+
+(define (tut-open?) *tut-open?*)
+(define (tut-page) *tut-page*)
+
+(define (tut-welcome-tip)
+  "Welcome! /tutorial = friendly guide · arrows · 1/2/3 care · C-d quit")
+
+(define (tut-welcome!)
+  (game-set-speech! (tut-welcome-tip))
+  #t)
+
+(define (tut-help-short)
+  "cmds: /tutorial /brain /mutate /diff /save /npc /grow /help  ·  /tut care|code|fight")
+
+(define (tut-trim s)
+  (let ((n (string-length s)))
+    (let loop ((i 0))
+      (if (and (< i n) (string=? (substring s i (+ i 1)) " "))
+          (loop (+ i 1))
+        (if (>= i n)
+            (tut-empty)
+          (let loop2 ((j n))
+            (if (and (> j i) (string=? (substring s (- j 1) j) " "))
+                (loop2 (- j 1))
+              (substring s i j))))))))
+
+(define (tut-first-token s)
+  (let ((n (string-length s)))
+    (let loop ((i 0))
+      (if (>= i n)
+          s
+        (if (string=? (substring s i (+ i 1)) " ")
+            (substring s 0 i)
+          (loop (+ i 1)))))))
+
+; Main entry. args: "" | "care" | "3" | "next" | "try" | ...
+(define (tut-dispatch! args)
+  (let* ((raw (if (string? args) args (tut-empty)))
+         (a (tut-trim raw))
+         (key (tut-resolve-topic (tut-first-token a))))
+    (cond
+      ((= key -1) (tut-next!))
+      ((= key -2) (tut-back!))
+      ((= key -3) (tut-try-start!))
+      ((= key -4) (tut-close!))
+      ((= key -5)
+       (game-set-speech!
+         (string-append "Unknown topic — try: basics care code fight world save · /n"))
+       (game-speech))
+      (else (tut-show-page! key)))))
+
+; ── optional soft try-mode (never blocks free play) ──
+
+(define (tut-try-prompt step)
+  (cond
+    ((= step 0) "Try 1/6: move with arrows  (/tut close to stop)")
+    ((= step 1) "Try 2/6: press 1 to feed")
+    ((= step 2) "Try 3/6: type /brain — see living code")
+    ((= step 3) "Try 4/6: type /mutate — rewrite source")
+    ((= step 4) "Try 5/6: type /diff — before vs after")
+    ((= step 5) "Try 6/6: type /save — keep this life")
+    (else "Try done! Browse more: /tutorial code · /tutorial fight")))
+
+(define (tut-try-kind step)
+  (cond
+    ((= step 0) "move")
+    ((= step 1) "feed")
+    ((= step 2) "brain")
+    ((= step 3) "mutate")
+    ((= step 4) "diff")
+    ((= step 5) "save")
+    (else (tut-empty))))
+
+(define (tut-try-active?)
+  (and (>= *tut-try* 0) (< *tut-try* *tut-try-total*)))
+
+(define (tut-try-start!)
+  (set! *tut-open?* #f)
+  (set! *tut-try* 0)
+  (game-set-speech! (tut-try-prompt 0))
+  (game-speech))
+
+(define (tut-try-stop!)
+  (set! *tut-try* -2)
+  #t)
+
+(define (tut-active?) (tut-try-active?))
+(define (tut-off!)
+  (set! *tut-open?* #f)
+  (set! *tut-try* -2)
+  #t)
+(define (tut-start!)
+  (tut-show-page! 0)
+  #t)
+(define (tut-skip!)
+  (tut-close!))
+
+; Advance soft try-mode if kind matches.
+(define (tut-on-act! kind)
+  (if (not (tut-try-active?))
+      #f
+    (if (string=? kind (tut-try-kind *tut-try*))
+        (begin
+          (set! *tut-try* (+ *tut-try* 1))
+          (let ((msg
+                  (if (>= *tut-try* *tut-try-total*)
+                      (begin
+                        (set! *tut-try* -1)
+                        "Try done! /tutorial for full guide · free play")
+                    (tut-try-prompt *tut-try*))))
+            (game-set-speech! msg)
+            msg))
+      #f)))
+
+; Same + short prefix toast (only if short ASCII).
+(define (tut-on-act-blend! kind prefix)
+  (let ((base (tut-on-act! kind)))
+    (if (not base)
+        #f
+      (if (and (string? prefix)
+               (> (string-length prefix) 0)
+               (<= (string-length prefix) 40))
+          (let ((msg (string-append prefix " | " base)))
+            (game-set-speech! msg)
+            msg)
+        base))))
+
+(define (tut-react-act! act)
+  (if (not (string? act))
+      #f
+    (tut-on-act! act)))
+
+(define (tut-react-act-blend! act prefix)
+  (if (not (string? act))
+      #f
+    (tut-on-act-blend! act prefix)))

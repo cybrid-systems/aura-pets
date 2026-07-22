@@ -54,8 +54,20 @@
           (loop (+ i 1)))))))
 
 (define (cmd-help-text)
-  (string-append
-    "/brain /diff /mutate /npc … | /save /load /new /export | /help"))
+  (try (tut-help-short)
+       (catch (e)
+         "/tutorial · /brain /mutate /diff · /save /npc /grow · /help")))
+
+; Soft try-mode only (optional walkthrough). Never blocks free play.
+(define (cmd-tut-after! act . rest)
+  (try
+    (let ((prefix (if (and (pair? rest) (string? (car rest)))
+                      (car rest)
+                    "")))
+      (if (> (string-length prefix) 0)
+          (tut-react-act-blend! act prefix)
+        (tut-react-act! act)))
+    (catch (e) #f)))
 
 ; Core slash dispatcher. pet is the live pet record.
 (define (cmd-run pet raw)
@@ -65,9 +77,63 @@
          (args (cdr parts)))
     (cond
       ; ── meta ──
+      ; /help — short command index; points to full interactive guide
       ((or (string=? head "help") (string=? head "h") (string=? head "?"))
-       (set! *speech* (cmd-help-text))
-       (set! *last-act* "help")
+       (if (= (string-length args) 0)
+           (begin
+             (set! *speech* (cmd-help-text))
+             (set! *last-act* "help")
+             (cons #t pet))
+         ; /help care → same as /tutorial care
+         (begin
+           (set! *speech*
+             (try (tut-dispatch! args) (catch (e) (cmd-help-text))))
+           (set! *last-act* "help")
+           (cons #t pet))))
+
+      ; /tutorial [topic|n|next|back|try|close] — interactive play guide
+      ((or (string=? head "tutorial") (string=? head "tut")
+           (string=? head "lesson") (string=? head "guide-me")
+           (string=? head "howto") (string=? head "manual"))
+       (set! *speech*
+         (try (tut-dispatch! args)
+              (catch (e) "Guide: /tutorial · /tut care|code|fight · /n next")))
+       (set! *last-act* "tutorial")
+       (cons #t pet))
+
+      ; /n /next /more — next guide page (auto-opens menu if closed)
+      ; Note: /back is morph-prev; use /b or /tutorial back for guide prev.
+      ((or (string=? head "n") (string=? head "next") (string=? head "more"))
+       (set! *speech*
+         (try
+           (begin
+             (if (not (tut-open?))
+                 (tut-show-page! 0)
+               #t)
+             (tut-next!))
+           (catch (e) "Type /tutorial first")))
+       (set! *last-act* "tutorial")
+       (cons #t pet))
+
+      ; /b only — guide previous (do NOT steal /back from morph)
+      ((string=? head "b")
+       (set! *speech*
+         (try
+           (begin
+             (if (not (tut-open?))
+                 (tut-show-page! 0)
+               #t)
+             (tut-back!))
+           (catch (e) "Type /tutorial back")))
+       (set! *last-act* "tutorial")
+       (cons #t pet))
+
+      ; /skip|/close — close guide / stop try-mode
+      ((or (string=? head "skip") (string=? head "skiptut")
+           (string=? head "notut") (string=? head "close"))
+       (set! *speech*
+         (try (tut-close!) (catch (e) "Guide closed. /tutorial anytime")))
+       (set! *last-act* "skip")
        (cons #t pet))
 
       ((or (string=? head "quit") (string=? head "q") (string=? head "bye")
@@ -97,6 +163,8 @@
        (set! *speech*
          (try (genome-brain-show) (catch (e) (edsl-show))))
        (set! *last-act* "brain")
+       ; Tutorial: advance to /mutate (short next prompt; brain was set above)
+       (cmd-tut-after! "brain")
        (cons #t pet))
 
       ((or (string=? head "diff") (string=? head "evo")
@@ -105,14 +173,17 @@
          (try (string-append (genome-diff-show) " | " (genome-log-show))
               (catch (e) "diff: n/a")))
        (set! *last-act* "diff")
+       (cmd-tut-after! "diff" "Code changed!")
        (cons #t pet))
 
       ((or (string=? head "mutate") (string=? head "evolve-code")
            (string=? head "rewrite"))
        (set! *speech*
          (try (genome-force-mutate!) (catch (e) "mutate failed")))
-       (set! *last-act* "evolve-code")
+       (set! *last-act* "mutate")
        (anim-start! "evolve" 12)
+       ; Short fixed prefix — full toast is often >48 chars
+       (cmd-tut-after! "mutate" "Source rewrote!")
        (cons #t pet))
 
       ; /guide lazy | /guide more fierce | free: "be more clingy"
@@ -158,6 +229,7 @@
              (save-last-toast))
            (catch (e) "Save failed")))
        (set! *last-act* "save")
+       (cmd-tut-after! "save" "Life saved!")
        (cons #t pet))
 
       ; /load [path] — restore mind (play-safe data AST)
@@ -172,13 +244,18 @@
              (save-last-toast))
            (catch (e) "Load failed")))
        (set! *last-act* "load")
+       (try (tut-off!) (catch (e) #f))
        (cons #t pet))
 
-      ; /new — new life (soft reset)
+      ; /new — new life (soft reset); tip points at interactive guide
       ((or (string=? head "new") (string=? head "newgame")
            (string=? head "reset-life"))
        (try (pet-new-life!) (catch (e) #f))
-       (set! *speech* (try (save-last-toast) (catch (e) "New life!")))
+       (try (tut-off!) (catch (e) #f))
+       (set! *speech*
+         (try
+           (string-append (save-last-toast) " · /tutorial for guide")
+           (catch (e) "New life! · /tutorial for guide")))
        (set! *last-act* "new")
        (anim-start! "evolve" 10)
        (cons #t pet))
@@ -205,7 +282,9 @@
       ; ── care ──
       ((or (string=? head "eat") (string=? head "feed") (string=? head "1")
            (string=? head "f") (string=? head "nom"))
-       (game-apply-care pet "feed" pet-feed "eat"))
+       (let ((r (game-apply-care pet "feed" pet-feed "eat")))
+         (cmd-tut-after! "feed")
+         r))
 
       ((or (string=? head "play") (string=? head "2") (string=? head "p"))
        (game-apply-care pet "play" pet-play "play"))
@@ -394,7 +473,8 @@
          (parts (cmd-split norm))
          (head (cmd-downcase-ascii (car parts))))
     (or (string=? head "eat") (string=? head "feed") (string=? head "play")
-        (string=? head "sleep") (string=? head "grow") (string=? head "evolve")
+        (string=? head "sleep") (string=? head "1") (string=? head "2")
+        (string=? head "3") (string=? head "grow") (string=? head "evolve")
         (string=? head "back") (string=? head "fight") (string=? head "heal")
         (string=? head "status") (string=? head "stats") (string=? head "form")
         (string=? head "help") (string=? head "talk") (string=? head "world")
@@ -410,4 +490,11 @@
         (string=? head "export") (string=? head "save-brain")
         (string=? head "dump") (string=? head "save") (string=? head "load")
         (string=? head "new") (string=? head "continue")
-        (string=? head "restore"))))
+        (string=? head "restore")
+        (string=? head "tutorial") (string=? head "tut")
+        (string=? head "lesson") (string=? head "howto")
+        (string=? head "manual") (string=? head "guide-me")
+        (string=? head "skip") (string=? head "skiptut")
+        (string=? head "notut") (string=? head "close")
+        (string=? head "n") (string=? head "next") (string=? head "more")
+        (string=? head "b"))))
