@@ -53,6 +53,31 @@
 (define (genome-curious) *g-curious*)
 (define (genome-chatty) *g-chatty*)
 
+; Restore full genome from save (play-safe data only).
+(define (genome-restore! gen name lazy clingy fierce curious chatty)
+  (set! *g-gen* (if (number? gen) gen 0))
+  (set! *g-name* (if (string? name) name "Kitten Mind"))
+  (set! *g-lazy* (genome-clamp lazy))
+  (set! *g-clingy* (genome-clamp clingy))
+  (set! *g-fierce* (genome-clamp fierce))
+  (set! *g-curious* (genome-clamp curious))
+  (set! *g-chatty* (genome-clamp chatty))
+  (set! *g-tick* 0)
+  (set! *g-last-toast* "")
+  (genome-snapshot!)
+  #t)
+
+; Serialize for save-format:1 machine lines.
+(define (genome-save-line)
+  (string-append
+    "genome:gen=" (number->string *g-gen*)
+    "|name=" *g-name*
+    "|lazy=" (number->string *g-lazy*)
+    "|clingy=" (number->string *g-clingy*)
+    "|fierce=" (number->string *g-fierce*)
+    "|curious=" (number->string *g-curious*)
+    "|chatty=" (number->string *g-chatty*)))
+
 ; One-line live source (what kids/parents read as "the code").
 (define (genome-line)
   (string-append

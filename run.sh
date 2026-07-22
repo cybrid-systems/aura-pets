@@ -41,10 +41,11 @@ MODE="auto"
 # tui-prompt MUST load before cat-demo / cyber-cat-stage: play-handle-event!
 # and live-dispatch close over prompt-handle at load time. Loading prompt
 # after the example left every key act=nil (events arrived, handler unbound).
-# pet-genome after edsl; entity after world (query→patch→diff NPCs).
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/entity.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-genome.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
+# pet-genome after edsl; entity after world; pet-save last among life libs.
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/entity.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-genome.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-save.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
+CONTINUE_PLAY=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -53,48 +54,34 @@ while [ $# -gt 0 ]; do
 Aura Pets
 
   ./run.sh                 play on TTY, else demo
-  ./run.sh play            interactive
-  ./run.sh --demo [N]      headless frames
-  ./run.sh --cyber [N]     3D cyber cat stage (headless frames)
-  ./run.sh --cyber-orbit [N] 3D cyber cat stage orbit showcase (headless frames)
-  ./run.sh --cyber-live     3D cyber cat stage (interactive, Grok prompt)
+  ./run.sh play              interactive (new life)
+  ./run.sh play --continue   restore ~/.aura-pets/saves/latest.aura
+  ./run.sh --demo [N]        headless frames
+  ./run.sh --cyber [N]       3D cyber cat stage (headless frames)
+  ./run.sh --cyber-orbit [N] 3D cyber cat stage orbit showcase
+  ./run.sh --cyber-live      3D cyber cat stage (interactive)
   ./run.sh smoke
-  ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
+  ./run.sh play --log FILE   debug log path
 
 Play: arrows move | 1 2 3 care | Ctrl+D quit | 2× Ctrl+C quit
-  Living code (Slice A — see the pet evolve):
-    /brain                genome + speech rules (the "source")
-    /diff                 before → after last evolution
-    /mutate               force one self-rewrite + toast
-    /guide lazy|fierce…   player steers personality
-    type: "be more clingy" / "more fierce" (no slash)
-    /teach feed Hi        rewrite speech rule (logged as code edit)
-    /npc Bunny            show living record (query)
-    /npc Bunny set hp 20  patch field (mutate)
-    /npc @near trait fierce +2
-    /npc kind=enemy trait fierce +2   batch patch all enemies
-    /npc kind=friend add hp 3
-    /export               dump genome+NPCs → /tmp/aura-pets-session.aura
-    type: "more fierce" / "all enemies fiercer" → offline intent patch
-    fight: NPC on-hit taunt speech fires when set
-  Slash commands (type /… then Enter):
-    /eat /play /sleep     care
-    /grow /back           morph forms (Kitten→…→Dragon)
-    /fire  (or Space)     shoot in facing dir (tank mode)
-    /weapon [name]        cycle/set: shot double beam bomb fire
-    /fight                melee if close
-    /heal /status /talk /world /help
-    /bg cyber|stars|ocean|city|sunset|meadow|grid
-  Free text (async LLM): "cyber rain" / "starry night" / "ocean beach"
-  Double-tap same arrow = dash. NPCs shoot back. HP bars + dmg FX.
-World/NL: pure Aura (llm-client + engines). Key: ~/code/keys/minimax
+  Living code:
+    /brain /diff /mutate /guide lazy|fierce
+    /npc Bunny set hp 20 | /npc kind=enemy trait fierce +2
+    /save [/path]         life progress (default ~/.aura-pets/saves/latest.aura)
+    /load [/path]         restore mind + NPCs (data AST, no set-code)
+    /new                  new life (soft reset genome/edsl/love)
+    /export [/path]       share/debug export (exports/ or /tmp)
+    type: "be more clingy" / "all enemies fiercer"
+  Save: quit auto-saves latest; --continue or /load to resume
+  Slash: /eat /grow /fire /fight /heal /status /talk /world /help /bg …
+World/NL: pure Aura. Key: ~/code/keys/minimax
 
-Debug: every play session writes $LOG_FILE
-  tail -f /tmp/aura-pets-debug.log
+Debug: $LOG_FILE  (tail -f /tmp/aura-pets-debug.log)
 USAGE
       exit 0
       ;;
     play|--interactive|--play) MODE="play"; shift ;;
+    --continue|-c) CONTINUE_PLAY=1; shift ;;
     --log) LOG_FILE="$2"; shift 2 || shift ;;
     --demo)
       MODE="demo"
@@ -129,6 +116,11 @@ case "$MODE" in
   play)
     # plog-start! uses fixed default; override path before entry
     # tui-prompt already in LOAD_CORE (before EXAMPLE).
+    if [ "$CONTINUE_PLAY" = "1" ] || [ "${AURA_PETS_CONTINUE:-}" = "1" ]; then
+      export AURA_PETS_CONTINUE=1
+    else
+      unset AURA_PETS_CONTINUE 2>/dev/null || export AURA_PETS_CONTINUE=0
+    fi
     EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (plog-set-path! \"$LOG_FILE\") (play-entry))"
     export AURA_TUI_LIVE=1
     ;;

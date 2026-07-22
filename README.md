@@ -9,7 +9,8 @@ Design: [docs/DESIGN.md](docs/DESIGN.md) · Business here · Render bugs → **a
 ```bash
 cd /path/to/aura-grok && cmake -B build && cmake --build build --target aura -j
 cd /path/to/aura-pets
-./run.sh play
+./run.sh play              # new life
+./run.sh play --continue   # restore ~/.aura-pets/saves/latest.aura
 ```
 
 | Input | Effect |

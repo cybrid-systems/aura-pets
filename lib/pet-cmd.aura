@@ -55,8 +55,7 @@
 
 (define (cmd-help-text)
   (string-append
-    "/brain /diff /mutate /guide lazy | /npc Bunny set hp 20 "
-    "/npc @near trait fierce +2 | /teach feed Hi | /help"))
+    "/brain /diff /mutate /npc … | /save /load /new /export | /help"))
 
 ; Core slash dispatcher. pet is the live pet record.
 (define (cmd-run pet raw)
@@ -148,21 +147,60 @@
          (anim-start! "evolve" 8)
          (cons #t pet)))
 
-      ; /export — dump living genome + NPCs as .aura data AST
+      ; /save [path] — life progress (genome + edsl + NPCs)
+      ((or (string=? head "save") (string=? head "sav"))
+       (set! *speech*
+         (try
+           (begin
+             (if (= (string-length args) 0)
+                 (pet-save-default!)
+               (pet-save! args))
+             (save-last-toast))
+           (catch (e) "Save failed")))
+       (set! *last-act* "save")
+       (cons #t pet))
+
+      ; /load [path] — restore mind (play-safe data AST)
+      ((or (string=? head "load") (string=? head "continue")
+           (string=? head "restore"))
+       (set! *speech*
+         (try
+           (begin
+             (if (= (string-length args) 0)
+                 (pet-load-default!)
+               (pet-load! args))
+             (save-last-toast))
+           (catch (e) "Load failed")))
+       (set! *last-act* "load")
+       (cons #t pet))
+
+      ; /new — new life (soft reset)
+      ((or (string=? head "new") (string=? head "newgame")
+           (string=? head "reset-life"))
+       (try (pet-new-life!) (catch (e) #f))
+       (set! *speech* (try (save-last-toast) (catch (e) "New life!")))
+       (set! *last-act* "new")
+       (anim-start! "evolve" 10)
+       (cons #t pet))
+
+      ; /export [path] — share/debug export (not the primary progress slot)
       ((or (string=? head "export") (string=? head "save-brain")
            (string=? head "dump"))
-       (let ((path
-               (if (= (string-length args) 0)
-                   "/tmp/aura-pets-session.aura"
-                 args)))
-         (set! *speech*
-           (try
-             (begin
-               (entity-export-session! path)
-               (string-append "Saved living code -> " path))
-             (catch (e) "Export failed")))
-         (set! *last-act* "export")
-         (cons #t pet)))
+       (set! *speech*
+         (try
+           (begin
+             (if (= (string-length args) 0)
+                 (pet-export! (save-empty))
+               (pet-export! args))
+             (save-last-toast))
+           (catch (e)
+             (try
+               (begin
+                 (entity-export-session! "/tmp/aura-pets-session.aura")
+                 "Exported /tmp/aura-pets-session.aura")
+               (catch (e2) "Export failed")))))
+       (set! *last-act* "export")
+       (cons #t pet))
 
       ; ── care ──
       ((or (string=? head "eat") (string=? head "feed") (string=? head "1")
@@ -370,4 +408,6 @@
         (string=? head "rewrite") (string=? head "temper")
         (string=? head "npc") (string=? head "entity") (string=? head "mob")
         (string=? head "export") (string=? head "save-brain")
-        (string=? head "dump"))))
+        (string=? head "dump") (string=? head "save") (string=? head "load")
+        (string=? head "new") (string=? head "continue")
+        (string=? head "restore"))))

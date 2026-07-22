@@ -52,21 +52,24 @@
   (let ((r (edsl-find event)))
     (if r (car (cdr (cdr r))) 0)))
 
+; Rewrite or append a rule with explicit love-delta (save/load).
+(define (edsl-set-rule! event speech love)
+  (let loop ((xs *edsl-rules*) (acc '()))
+    (cond
+      ((null? xs)
+       (set! *edsl-rules*
+         (append (reverse acc) (list (list event speech love))))
+       #t)
+      ((string=? (car (car xs)) event)
+       (set! *edsl-rules*
+         (append (reverse acc)
+                 (cons (list event speech love) (cdr xs))))
+       #t)
+      (else (loop (cdr xs) (cons (car xs) acc))))))
+
 ; Rewrite or append a rule — this IS the in-process AST mutation of the eDSL.
 (define (edsl-teach! event speech)
-  (let ((love (edsl-love-delta event)))
-    (let loop ((xs *edsl-rules*) (acc '()))
-      (cond
-        ((null? xs)
-         (set! *edsl-rules*
-           (append (reverse acc) (list (list event speech love))))
-         #t)
-        ((string=? (car (car xs)) event)
-         (set! *edsl-rules*
-           (append (reverse acc)
-                   (cons (list event speech love) (cdr xs))))
-         #t)
-        (else (loop (cdr xs) (cons (car xs) acc)))))))
+  (edsl-set-rule! event speech (edsl-love-delta event)))
 
 ; Human-readable eDSL dump (ASCII, safe for tui:cell/draw-text).
 (define (edsl-show)

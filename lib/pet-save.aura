@@ -1,0 +1,402 @@
+; lib/pet-save.aura — life-state save/load (data AST, no set-code).
+;
+; Format save-format:1 (apply-lines, machine + human readable):
+;   save-format:1
+;   saved-at:<token>
+;   theme:...  bg:...
+;   love:N
+;   genome:gen=N|name=...|lazy=N|...
+;   edsl:event|speech|love
+;   npc:Name|x|y|kind|speech|sprite|id|hp|atk|ai|fierce=N,...|idle=...,on-hit=...
+;
+; Paths:
+;   ~/.aura-pets/saves/latest.aura   progress (default)
+;   /tmp/aura-pets-session.aura      debug export (optional)
+;
+; Load order: after entity + genome + edsl + world + game (uses *love*).
+
+(define *save-format* "1")
+(define *save-last-toast* "")
+(define *save-default-path* "")
+
+(define (save-empty) (substring "x" 0 0))
+
+(define (save-last-toast) *save-last-toast*)
+
+; HOME/.aura-pets or /tmp/aura-pets-home fallback.
+(define (save-home-root)
+  (let ((h (try (getenv "HOME") (catch (e) #f))))
+    (if (and (string? h) (> (string-length h) 0))
+        (string-append h "/.aura-pets")
+      "/tmp/aura-pets-home")))
+
+(define (save-dir)
+  (string-append (save-home-root) "/saves"))
+
+(define (save-export-dir)
+  (string-append (save-home-root) "/exports"))
+
+(define (save-latest-path)
+  (let ((env (try (getenv "AURA_PETS_SAVE_PATH") (catch (e) #f))))
+    (if (and (string? env) (> (string-length env) 0))
+        env
+      (string-append (save-dir) "/latest.aura"))))
+
+(define (save-ensure-dirs!)
+  (try
+    (shell (string-append "mkdir -p '" (save-dir) "' '" (save-export-dir) "'"))
+    (catch (e) #f))
+  #t)
+
+; ── split helpers ──
+(define (save-split-bar s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (start 0) (acc '()))
+      (if (>= i n)
+          (reverse (cons (substring s start n) acc))
+        (if (string=? (substring s i (+ i 1)) "|")
+            (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))
+          (loop (+ i 1) start acc))))))
+
+(define (save-kv-get parts key)
+  ; parts like ("gen=3" "name=Foo" ...) → value or #f
+  (let ((prefix (string-append key "="))
+        (plen (+ (string-length key) 1)))
+    (let loop ((xs parts))
+      (if (null? xs) #f
+        (let* ((p (car xs))
+               (pn (string-length p)))
+          (if (and (>= pn plen)
+                   (string=? (substring p 0 plen) prefix))
+              (substring p plen pn)
+            (loop (cdr xs))))))))
+
+(define (save-num s def)
+  (let ((n (if (string? s) (string->number s) #f)))
+    (if n n def)))
+
+; Sanitize speech for bar-format (no | or newline).
+(define (save-safe-text s)
+  (if (not (string? s)) (save-empty)
+    (let ((n (string-length s)))
+      (let loop ((i 0) (acc (save-empty)))
+        (if (>= i n) acc
+          (let ((ch (substring s i (+ i 1))))
+            (loop (+ i 1)
+                  (if (or (string=? ch "|") (string=? ch "\n")
+                          (string=? ch "\r"))
+                      (string-append acc " ")
+                    (string-append acc ch)))))))))
+
+(define (save-traits-str n)
+  (let ((n (npc-normalize n)))
+    (string-append
+      "fierce=" (number->string (npc-trait-get n "fierce"))
+      ",clingy=" (number->string (npc-trait-get n "clingy"))
+      ",lazy=" (number->string (npc-trait-get n "lazy"))
+      ",curious=" (number->string (npc-trait-get n "curious"))
+      ",chatty=" (number->string (npc-trait-get n "chatty")))))
+
+(define (save-behaviors-str n)
+  (let ((n (npc-normalize n)))
+    (let loop ((xs (npc-behaviors n)) (acc (save-empty)) (c 0))
+      (if (or (null? xs) (>= c 4))
+          acc
+        (let* ((b (car xs))
+               (piece (string-append (car b) "="
+                                     (save-safe-text (car (cdr b)))))
+               (next (if (= (string-length acc) 0)
+                         piece
+                       (string-append acc "," piece))))
+          (loop (cdr xs) next (+ c 1)))))))
+
+(define (save-npc-line n)
+  (let ((n (npc-normalize n)))
+    (string-append
+      "npc:" (save-safe-text (npc-name n)) "|"
+      (number->string (npc-x n)) "|"
+      (number->string (npc-y n)) "|"
+      (save-safe-text (npc-kind n)) "|"
+      (save-safe-text (npc-speech n)) "|"
+      (save-safe-text (npc-sprite n)) "|"
+      (save-safe-text (npc-id n)) "|"
+      (number->string (npc-hp n)) "|"
+      (number->string (npc-atk n)) "|"
+      (save-safe-text (npc-ai n)) "|"
+      (save-traits-str n) "|"
+      (save-behaviors-str n))))
+
+(define (save-edsl-lines)
+  (let loop ((xs (edsl-rules)) (acc (save-empty)))
+    (if (null? xs) acc
+      (let ((r (car xs)))
+        (loop (cdr xs)
+              (string-append acc
+                "edsl:" (car r) "|"
+                (save-safe-text (car (cdr r))) "|"
+                (number->string (car (cdr (cdr r)))) "\n"))))))
+
+; Build full save body (save-format:1).
+(define (save-serialize)
+  (let* ((love (try (game-love) (catch (e) 0)))
+         (head
+           (string-append
+             "save-format:" *save-format* "\n"
+             "saved-at:session\n"
+             "theme:" (try *world-theme* (catch (e) "Meadow")) "\n"
+             "bg:" (try *bg-style* (catch (e) "meadow")) "\n"
+             "love:" (number->string love) "\n"
+             (try (genome-save-line) (catch (e) "genome:gen=0|name=Kitten Mind|lazy=3|clingy=4|fierce=3|curious=5|chatty=5"))
+             "\n"
+             (save-edsl-lines)))
+         (npcs
+           (let loop ((xs *world-npcs*) (acc (save-empty)))
+             (if (null? xs) acc
+               (loop (cdr xs)
+                     (string-append acc (save-npc-line (car xs)) "\n"))))))
+    (string-append head npcs)))
+
+; ── write ──
+(define (pet-save! path)
+  (save-ensure-dirs!)
+  (let ((p (if (and (string? path) (> (string-length path) 0))
+               path
+             (save-latest-path)))
+        (body (save-serialize)))
+    (try
+      (begin
+        (write-file p body)
+        ; Keep a debug copy for cat / tooling.
+        (try (write-file "/tmp/aura-pets-session.aura" body) (catch (e) #f))
+        (set! *save-last-toast*
+          (string-append "Saved mind -> " p))
+        (set! *save-default-path* p)
+        #t)
+      (catch (e)
+        (begin
+          (set! *save-last-toast* "Save failed")
+          #f)))))
+
+(define (pet-save-default!)
+  (pet-save! (save-latest-path)))
+
+; Human export (commentary + same data block).
+(define (pet-export! path)
+  (save-ensure-dirs!)
+  (let* ((p (if (and (string? path) (> (string-length path) 0))
+                path
+              (string-append (save-export-dir) "/session.aura")))
+         (body
+           (string-append
+             ";; aura-pets export — living data AST (readable)\n"
+             ";; Also loadable via /load if save-format lines present.\n"
+             ";; " (try (genome-line) (catch (e) "")) "\n\n"
+             (save-serialize))))
+    (try
+      (begin
+        (write-file p body)
+        (try (write-file "/tmp/aura-pets-session.aura" body) (catch (e) #f))
+        (set! *save-last-toast* (string-append "Exported -> " p))
+        #t)
+      (catch (e)
+        (begin (set! *save-last-toast* "Export failed") #f)))))
+
+; ── parse genome line ──
+(define (save-apply-genome-body body)
+  ; body after "genome:"
+  (let* ((parts (save-split-bar body))
+         (gen (save-num (save-kv-get parts "gen") 0))
+         (name (let ((n (save-kv-get parts "name")))
+                 (if n n "Kitten Mind")))
+         (lazy (save-num (save-kv-get parts "lazy") 3))
+         (clingy (save-num (save-kv-get parts "clingy") 4))
+         (fierce (save-num (save-kv-get parts "fierce") 3))
+         (curious (save-num (save-kv-get parts "curious") 5))
+         (chatty (save-num (save-kv-get parts "chatty") 5)))
+    (genome-restore! gen name lazy clingy fierce curious chatty)
+    #t))
+
+(define (save-parse-traits s)
+  ; "fierce=2,clingy=3,..." → list of (name val)
+  (if (or (not (string? s)) (= (string-length s) 0))
+      (list (list "fierce" 2) (list "clingy" 3) (list "curious" 4)
+            (list "lazy" 3) (list "chatty" 4))
+    (let ((n (string-length s)))
+      (let loop ((i 0) (start 0) (acc '()))
+        (define (flush end)
+          (if (>= start end) acc
+            (let* ((piece (substring s start end))
+                   (eq (let find ((j 0) (m (string-length piece)))
+                         (if (>= j m) -1
+                           (if (string=? (substring piece j (+ j 1)) "=") j
+                             (find (+ j 1) m))))))
+              (if (< eq 0) acc
+                (cons (list (substring piece 0 eq)
+                            (save-num (substring piece (+ eq 1)
+                                                (string-length piece)) 0))
+                      acc)))))
+        (if (>= i n)
+            (reverse (flush n))
+          (if (string=? (substring s i (+ i 1)) ",")
+              (loop (+ i 1) (+ i 1) (flush i))
+            (loop (+ i 1) start acc)))))))
+
+(define (save-parse-behaviors s default-speech)
+  (if (or (not (string? s)) (= (string-length s) 0))
+      (list (list "idle" default-speech)
+            (list "on-hit" "Ow!")
+            (list "on-talk" default-speech))
+    (let ((n (string-length s)))
+      (let loop ((i 0) (start 0) (acc '()))
+        (define (flush end)
+          (if (>= start end) acc
+            (let* ((piece (substring s start end))
+                   (eq (let find ((j 0) (m (string-length piece)))
+                         (if (>= j m) -1
+                           (if (string=? (substring piece j (+ j 1)) "=") j
+                             (find (+ j 1) m))))))
+              (if (< eq 0) acc
+                (cons (list (substring piece 0 eq)
+                            (substring piece (+ eq 1) (string-length piece)))
+                      acc)))))
+        (if (>= i n)
+            (let ((xs (reverse (flush n))))
+              (if (null? xs)
+                  (list (list "idle" default-speech))
+                xs))
+          (if (string=? (substring s i (+ i 1)) ",")
+              (loop (+ i 1) (+ i 1) (flush i))
+            (loop (+ i 1) start acc)))))))
+
+(define (save-apply-npc-body body)
+  ; Name|x|y|kind|speech|sprite|id|hp|atk|ai|traits|behaviors
+  (let ((parts (save-split-bar body)))
+    (if (< (length parts) 5) #f
+      (let* ((name (list-ref-safe parts 0 "Npc"))
+             (x (save-num (list-ref-safe parts 1 "0") 0))
+             (y (save-num (list-ref-safe parts 2 "0") 0))
+             (kind (list-ref-safe parts 3 "friend"))
+             (speech (list-ref-safe parts 4 "Hi"))
+             (sprite (list-ref-safe parts 5 (save-empty)))
+             (id (list-ref-safe parts 6
+                    (string-append "npc-" (try (ent-slug name)
+                                               (catch (e) "x")))))
+             (hp (save-num (list-ref-safe parts 7 "12") 12))
+             (atk (save-num (list-ref-safe parts 8 "2") 2))
+             (ai (list-ref-safe parts 9 "friend"))
+             (traits (save-parse-traits (list-ref-safe parts 10 (save-empty))))
+             (behs (save-parse-behaviors (list-ref-safe parts 11 (save-empty))
+                                         speech))
+             (npc (npc-make name x y kind speech sprite id hp atk ai
+                            traits behs (save-empty))))
+        (world-add-npc! npc)
+        #t))))
+
+; Safe nth for list of strings.
+(define (list-ref-safe xs i def)
+  (let loop ((ys xs) (j 0))
+    (if (null? ys) def
+      (if (= j i) (car ys)
+        (loop (cdr ys) (+ j 1))))))
+
+(define (save-apply-line! line)
+  (let ((n (string-length line)))
+    (cond
+      ((= n 0) #t)
+      ((and (>= n 1) (string=? (substring line 0 1) ";")) #t)
+      ((and (>= n 12) (string=? (substring line 0 12) "save-format:")) #t)
+      ((and (>= n 9) (string=? (substring line 0 9) "saved-at:")) #t)
+      ((and (>= n 6) (string=? (substring line 0 6) "theme:"))
+       (try (world-set-theme! (substring line 6 n)) (catch (e) #f)))
+      ((and (>= n 3) (string=? (substring line 0 3) "bg:"))
+       (try (world-set-bg-style! (substring line 3 n)) (catch (e) #f)))
+      ((and (>= n 5) (string=? (substring line 0 5) "love:"))
+       (let ((v (save-num (substring line 5 n) 0)))
+         (try (set! *love* v) (catch (e) #f))
+         #t))
+      ((and (>= n 7) (string=? (substring line 0 7) "genome:"))
+       (save-apply-genome-body (substring line 7 n)))
+      ((and (>= n 5) (string=? (substring line 0 5) "edsl:"))
+       (let ((parts (save-split-bar (substring line 5 n))))
+         (if (< (length parts) 2) #f
+           (edsl-set-rule!
+             (list-ref-safe parts 0 "feed")
+             (list-ref-safe parts 1 "...")
+             (save-num (list-ref-safe parts 2 "1") 1)))))
+      ((and (>= n 4) (string=? (substring line 0 4) "npc:"))
+       (save-apply-npc-body (substring line 4 n)))
+      (else #t))))
+
+(define (save-apply-text! text)
+  (let ((n (string-length text)))
+    (let loop ((i 0) (start 0))
+      (if (>= i n)
+          (begin
+            (if (< start n)
+                (save-apply-line! (substring text start n))
+              #t)
+            #t)
+        (if (string=? (substring text i (+ i 1)) "\n")
+            (begin
+              (if (> i start)
+                  (save-apply-line! (substring text start i))
+                #t)
+              (loop (+ i 1) (+ i 1)))
+          (loop (+ i 1) start))))))
+
+; Full load: clear life state then apply file (play-safe).
+(define (pet-load! path)
+  (let ((p (if (and (string? path) (> (string-length path) 0))
+               path
+             (save-latest-path))))
+    (if (not (file-exists? p))
+        (begin
+          (set! *save-last-toast* (string-append "No save at " p))
+          #f)
+      (try
+        (begin
+          ; Soft reset life layers (keep TUI up).
+          (try (edsl-reset!) (catch (e) #f))
+          (try (genome-reset!) (catch (e) #f))
+          (try (set! *love* 0) (catch (e) #f))
+          (try (set! *care-count* 0) (catch (e) #f))
+          (try (world-clear-npcs!) (catch (e) #f))
+          (try (world-clear-props!) (catch (e) #f))
+          (save-apply-text! (read-file p))
+          (set! *save-default-path* p)
+          (set! *save-last-toast*
+            (string-append
+              "Restored mind: "
+              (try (genome-name) (catch (e) "?"))
+              " gen" (number->string (try (genome-gen) (catch (e) 0)))
+              " · " (number->string (world-npc-count)) " NPCs"))
+          #t)
+        (catch (e)
+          (begin
+            (set! *save-last-toast* "Save broken — started fresh")
+            (try (pet-new-life!) (catch (e2) #f))
+            #f))))))
+
+(define (pet-load-default!)
+  (pet-load! (save-latest-path)))
+
+; New life: reset genome/edsl/love, keep or soft-reset world.
+(define (pet-new-life!)
+  (try (edsl-reset!) (catch (e) #f))
+  (try (genome-reset!) (catch (e) #f))
+  (try (set! *love* 0) (catch (e) #f))
+  (try (set! *care-count* 0) (catch (e) #f))
+  (try (set! *last-act* "idle") (catch (e) #f))
+  (try (set! *speech* "New life! Care 1 2 3 · /brain · /save")
+       (catch (e) #f))
+  (try (anim-reset!) (catch (e) #f))
+  (try (morph-reset!) (catch (e) #f))
+  (set! *save-last-toast* "New life begun")
+  #t)
+
+; True if env asks to continue.
+(define (pet-should-continue?)
+  (let ((e (try (getenv "AURA_PETS_CONTINUE") (catch (e) #f))))
+    (and (string? e)
+         (or (string=? e "1") (string=? e "true") (string=? e "yes")
+             (string=? e "YES") (string=? e "TRUE")))))

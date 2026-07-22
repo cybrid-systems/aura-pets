@@ -20,9 +20,8 @@ Product design: `docs/DESIGN.md`. Current ship target: **R1 Kids MVP**.
 
 `run.sh` prefers `AURA_GROK_HOME/build/aura` and sets `AURA_STDLIB_DIR` + `AURA_PATH`.
 
-Load order: lifecycle → **world** → **entity** → edsl → **genome** → anim → game → combat → … → **tui-prompt** → example.
-(`tui-prompt` before example: `play-handle-event!` binds `prompt-handle` at load time.)
-(`entity`: query→patch→diff NPCs; `genome`: pet self-evolution.)
+Load order: lifecycle → **world** → **entity** → edsl → **genome** → anim → game → combat → **pet-save** → … → **tui-prompt** → example.
+(`pet-save`: `save-format:1` life state; quit auto-save; `--continue` / `/load`.)
 
 ## Debug log (play exits)
 

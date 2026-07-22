@@ -619,10 +619,12 @@
   (plog-flush!)
   (game-set-speech!
     (string-append "Welcome! " (world-theme)
-                   " | /brain /diff /mutate | guide: lazy/fierce"
-                   " | C-d quit"))
+                   " | /brain /save /load /new | C-d quit"))
   (prompt-set-log! (game-speech))
   (try (plog "genome" (genome-line)) (catch (e) #f))
+  ; Optional continue: AURA_PETS_CONTINUE=1 or ./run.sh play --continue
+  ; (overrides welcome speech when a save is restored)
+  (try (play-maybe-continue!) (catch (e) #f))
   (plog "ready" "entering-play-loop")
   (plog-flush!)
   ; Frame cap to calm flicker on terminal TUI. Aura has no tui:sleep
@@ -649,15 +651,17 @@
                  (plog "ERROR" "play-step-exception")
                  (plog-flush!))))))
   (plog-quit *p-quit* *p-frame* (pet-snap *p-pet*))
-  ; Export living genome + NPCs as data AST (session artifact).
+  ; Auto-save life progress + debug export copy.
   (try
     (begin
-      (entity-export-session! "/tmp/aura-pets-session.aura")
-      (plog "export" "/tmp/aura-pets-session.aura"))
-    (catch (e) (plog "export" "failed")))
+      (pet-save-default!)
+      (plog "save" (try (save-latest-path) (catch (e) "latest")))
+      (try (pet-export! (save-empty)) (catch (e) #f)))
+    (catch (e) (plog "save" "failed")))
   (prompt-set-log!
-    (string-append "bye (" *p-quit* ") log=" (plog-path)
-                   " code=/tmp/aura-pets-session.aura"))
+    (string-append "bye (" *p-quit* ") saved="
+                   (try (save-latest-path) (catch (e) "?"))
+                   " log=" (plog-path)))
   ; Restore terminal before last paint so block cursor / tty cursor come back.
   (tui:show-cursor)
   (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
@@ -668,4 +672,21 @@
   "BYE")
 
 (define (play-entry)
-  (cat-demo-interactive))
+  (cat-demo-interactive)
+  #t)
+
+; After interactive setup, optionally restore save (--continue).
+; Called from cat-demo-interactive after game-reset! when env set.
+(define (play-maybe-continue!)
+  (if (try (pet-should-continue?) (catch (e) #f))
+      (let ((ok (try (pet-load-default!) (catch (e) #f))))
+        (if ok
+            (begin
+              (game-set-speech! (try (save-last-toast) (catch (e) "Restored!")))
+              (prompt-set-log! (game-speech))
+              (plog "load" (try (save-last-toast) (catch (e) "ok")))
+              #t)
+          (begin
+            (plog "load" "no-save-or-fail")
+            #f)))
+    #f))
