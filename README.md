@@ -72,7 +72,7 @@ Default `./run.sh play` starts **new** with a short tip: type **`/tutorial`** fo
 | **Esc** | → NORMAL (hide prompt; keep draft buffer) |
 | **i** / **a** | → INSERT (show prompt) |
 | **:** | → INSERT with leading `/` (command-ready) |
-| **Enter** (non-empty) | Submit then back to NORMAL |
+| **Enter** | Submit command; **stay INSERT** (Esc → NORMAL) |
 | **Tab** | Slash complete (`/br` → `/brain `); cycle matches |
 | **↑ / ↓** | History when line non-empty or starts with `/` |
 | **C-p / C-n** | History always (empty line still OK) |

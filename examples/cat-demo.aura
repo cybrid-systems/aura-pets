@@ -537,14 +537,8 @@
              (plog "submit" (string-append "cmd=" cmd
                                            " keep=" (if (still-going? r) "1" "0")))
              (set! *p-pet* (cmd-pet r *p-pet*))
-             ; After command, mode is NORMAL (prompt hidden); keep toast in log.
-             (try
-               (if (prompt-normal?)
-                   (prompt-set-log!
-                     (string-append "NORMAL · "
-                                    (prompt-clip-cols (game-speech) 48)))
-                 #t)
-               (catch (e) #f))
+             ; Stay INSERT after submit; toast goes to prompt status line.
+             (try (prompt-set-log! (game-speech)) (catch (e) #f))
              (if (still-going? r)
                  #t
                (play-stop! (string-append "submit-stop=" cmd)))))))

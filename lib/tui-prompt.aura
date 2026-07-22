@@ -22,7 +22,7 @@
 ;   C-p history↑    C-n history↓
 ;   C-d empty → quit; non-empty → delete-fwd
 ;   Tab slash-complete
-;   Enter submit (+ push history); non-empty submit → NORMAL
+;   Enter submit (+ push history); stay INSERT (only Esc → NORMAL)
 ; Quit: Ctrl+D empty, or double Ctrl+C (app). q-quit off if *prompt-no-q-quit?*
 ;
 ; API:
@@ -747,17 +747,15 @@
        (prompt-enter-normal!)
        "mode")
       ((prompt-is-enter? ch)
-       (let ((had (> (string-length *prompt-buf*) 0)))
-         (prompt-hist-push! *prompt-buf*)
-         (set! *prompt-submit* *prompt-buf*)
-         (set! *prompt-buf* (prompt-empty))
-         (set! *prompt-cursor* 0)
-         (set! *prompt-ghost* (prompt-empty))
-         (set! *prompt-hint* (prompt-empty))
-         (set! *prompt-tab-i* 0)
-         ; After a real command, drop to NORMAL so the world fills the view.
-         (if had (prompt-enter-normal!) #t)
-         "submit"))
+       (prompt-hist-push! *prompt-buf*)
+       (set! *prompt-submit* *prompt-buf*)
+       (set! *prompt-buf* (prompt-empty))
+       (set! *prompt-cursor* 0)
+       (set! *prompt-ghost* (prompt-empty))
+       (set! *prompt-hint* (prompt-empty))
+       (set! *prompt-tab-i* 0)
+       ; Stay INSERT after submit — only Esc switches to NORMAL.
+       "submit")
       ((prompt-is-tab? ch)
        (if (prompt-tab-complete!) "edit" #f))
       ((or (prompt-is-hist-up? ch)
