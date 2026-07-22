@@ -24,8 +24,8 @@
 (define BG 526866)               ; 8 10 18
 (define MATRIX-GREEN 6615190)    ; 100 240 150
 (define NEON-PINK 16742590)      ; 255 120 190
-; Layout: HUD 0-2 | room | speech SCENE-Y1 | Grok-style 3-row input box PROMPT-Y..+2
-(define SCENE-Y0 3)
+; Layout: HUD 0-1 (2 lines) | room | speech SCENE-Y1 | prompt PROMPT-Y..+2
+(define SCENE-Y0 2)
 (define SCENE-Y1 18)
 (define PROMPT-Y 20)
 ; Compact refined cat (~7×4 half-block cells; was 12×6)
@@ -59,7 +59,8 @@
          (h (clamp-n raw-h 16 80)))
     (set! W w)
     (set! H h)
-    (set! SCENE-Y0 3)
+    ; 2-line clean HUD (identity + care bars)
+    (set! SCENE-Y0 2)
     ; leave 1 speech + 3-row bordered prompt box at bottom
     (set! SCENE-Y1 (clamp-n (- h 5) 8 (- h 4)))
     (set! PROMPT-Y (clamp-n (- h 3) 5 (- h 1)))
@@ -100,37 +101,44 @@
   (if (< y SCENE-Y0) SCENE-Y0
     (if (> y (- SCENE-Y1 CAT-H)) (- SCENE-Y1 CAT-H) y)))
 
+; Clean 2-line HUD (kids care loop first; combat only when hurt).
+; Row 0: who + love + scene name
+; Row 1: yum / heart / zest bars (+ life only if not full)
 (define (draw-hud! pet frame-n)
-  (draw-text 1 0 "Mochi" TITLE-CYAN BG)
-  (draw-text 7 0
-             (string-append (pet-form-name (pet-version pet))
-                            " " (battle-weapon)
-                            " " (battle-face)
-                            " love" (game-love-stars))
-             MATRIX-GREEN BG)
-  ; Pretty HP bar
-  (draw-hp-bar! 1 1 (combat-hp) (combat-max) 12 "HP")
-  ; Vitals mini
-  (draw-text 20 1 "F" BAR-FG BG)
-  (draw-text 21 1 (bar (pet-hunger pet)) BAR-FG BG)
-  (draw-text 32 1 "H" BAR-FG BG)
-  (draw-text 33 1 (bar (pet-mood pet))
-             (if (< (pet-mood pet) 5) BAR-LO BAR-FG) BG)
-  (draw-text 44 1 "E" BAR-FG BG)
-  (draw-text 45 1 (bar (pet-energy pet)) BAR-FG BG)
-  (draw-text 1 2
-             (string-append
-               (let ((th (try (tut-hud) (catch (e) ""))))
-                 (if (and (string? th) (> (string-length th) 0))
-                     (string-append th " | ")
-                   ""))
-               "Space fire | /bg cyber | ["
-               (world-theme) " bg="
-               (world-bg-style) " n="
-               (number->string (world-npc-count))
-               (if (nl-busy?) " ...]" "]"))
-             HUD-DIM BG)
-  #t)
+  (let* ((mood (game-mood-kid pet))
+         (form (pet-form-name (pet-version pet)))
+         (theme (try (world-theme) (catch (e) "")))
+         (tut (try (tut-hud) (catch (e) "")))
+         (line0
+           (string-append
+             "Mochi · " form
+             " · love" (game-love-stars)
+             " · " mood
+             (if (and (string? theme) (> (string-length theme) 0))
+                 (string-append " · " theme)
+               "")))
+         (hurt? (< (combat-hp) (combat-max)))
+         (line1
+           (string-append
+             "yum " (bar (pet-hunger pet))
+             "  heart " (bar (pet-mood pet))
+             "  zest " (bar (pet-energy pet))
+             (if hurt?
+                 (string-append
+                   "  life "
+                   (number->string (combat-hp))
+                   "/"
+                   (number->string (combat-max)))
+               "")
+             (if (and (string? tut) (> (string-length tut) 0))
+                 (string-append "  " tut)
+               "")
+             (if (nl-busy?) "  ..." ""))))
+    (draw-text 1 0 (prompt-clip-cols line0 (- W 2)) TITLE-CYAN BG)
+    (draw-text 1 1
+               (prompt-clip-cols line1 (- W 2))
+               (if (string=? mood "sad") BAR-LO BAR-FG) BG)
+    #t))
 
 (define (pose-face pose blink mood)
   (cond
