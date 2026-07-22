@@ -5,6 +5,12 @@
 ; — when it evolves, we'll mutate ccs-cat-body / -tail / -eyes / -antenna.
 ;
 ; Load order: voxel-render → cyber-cat-scene → this file.
+;
+; Note: tui:frame-ansi emits literal CSI cursor jumps (\x1b[r;cH) into the
+; captured output (fine in a live terminal, ugly in diffs/grep). Stripping
+; them with a Scheme-level loop blows Aura's 700-frame recursion limit on a
+; full frame (one frame-ansi = ~5KB = thousands of bytes). Follow-up commit
+; will move strip-ansi to a C++ primitive or batch the recursion.
 
 (require "std/tui/sprite" all:)
 (require "std/tui/canvas" all:)

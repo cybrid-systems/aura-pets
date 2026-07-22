@@ -122,16 +122,24 @@
           (ccs-cat-eyes frame)
           (ccs-cat-antenna frame)))
 
-; ─── Background buildings (2 distant cyber towers) ───
-; Reduced from 4 to keep voxel count manageable.
+; ─── Background buildings (4 distant cyber towers) ───
+; Distributed across screen via iso projection: high-z towers land on the
+; left/lower side, low-z towers on the right. Voxel budget kept under 700
+; total (Aura named-let recursion limit).
 (define (ccs-buildings)
   (append
-    ; Tower L (left, shorter)
+    ; Tower L (left, mid)
     (fill-box -10 -8 1 7 14 16 CCS-C-BLDG)
     (list (vx -9 8 15 CCS-C-BLDG-NEON))
     ; Tower R (right, taller)
     (fill-box 16 18 1 10 13 15 CCS-C-BLDG)
-    (list (vx 17 11 14 CCS-C-BLDG-NEON))))
+    (list (vx 17 11 14 CCS-C-BLDG-NEON))
+    ; Tower mid-back (centre-low on screen, far z)
+    (fill-box 8 10 1 4 22 24 CCS-C-BLDG)
+    (list (vx 9 5 23 CCS-C-BLDG-NEON))
+    ; Tower far-left (off to the side, deepest)
+    (fill-box -4 -2 1 5 20 22 CCS-C-BLDG)
+    (list (vx -3 6 21 CCS-C-BLDG-NEON))))
 
 ; ─── Matrix rain (background ASCII drops) ───
 ; 8 columns at deterministic x positions, scrolling down per frame.
