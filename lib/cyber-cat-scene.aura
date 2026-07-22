@@ -7,6 +7,23 @@
 ; World coords: x grows right (down-right in iso), y grows up, z grows back
 ; (down-left in iso). Cat sits on platform around (4-8, 0-7, 2-4).
 
+; ─── Self-evolution layer ───
+; Cat has 3 voxel forms. *ccs-cat-version* is global state; ccs-evolve! bumps
+; it (mod 3). ccs-cat dispatches to the active form's voxel list. The cat's
+; visual form IS its code — mutating this list (or the version state) is the
+; "code is life" layer per aura-pets strategy. Slash command /evolve (or
+; future keystroke) calls ccs-evolve! to advance the cat.
+;
+; v0 — cyber kitten (baseline): current body + tail + 2 eyes + 1 antenna
+; v1 — cyber-horned (mutation): v0 body + 2 horns + longer tail (6 vox)
+; v2 — cyber-winged (evolved): v1 body + 4 wing voxels + 3-antenna array
+
+(define *ccs-cat-version* 0)
+
+(define (ccs-evolve!)
+  (set! *ccs-cat-version* (modulo (+ *ccs-cat-version* 1) 3))
+  #t)
+
 ; ─── Palette (RGB triples) ───
 (define CCS-C-SKY       '(12 16 32))
 (define CCS-C-PLAT      '(18 22 38))
@@ -119,12 +136,72 @@
           (list (vx 7 10 2 CCS-C-ANTENNA))
           (list (vx 7 10 2 CCS-C-ANTENNA-DIM))))))
 
-; Full cat voxels (animated) for one frame.
-(define (ccs-cat frame)
+; ─── Cat v0 — baseline cyber kitten ───
+; Same body + tail + 2 eyes + 1 antenna as before.
+(define (ccs-cat-v0 frame)
   (append (ccs-cat-body)
           (ccs-cat-tail frame)
           (ccs-cat-eyes frame)
           (ccs-cat-antenna frame)))
+
+; ─── Cat v1 — cyber-horned (mutation: v0 + 2 horns + longer tail) ───
+; Body adds 2 magenta horn voxels on top of head (pulse with eyes).
+(define (ccs-cat-body-v1)
+  (append (ccs-cat-body)
+          (list (vx 6 9 2 CCS-C-EYE)
+                (vx 8 9 3 CCS-C-EYE))))
+
+; Tail extends with 2 more voxels (forked tip, neon-edge accents).
+(define (ccs-cat-tail-v1 frame)
+  (append (ccs-cat-tail frame)
+          (list (vx 0 3 3 CCS-C-CAT-EDGE)
+                (vx -1 3 3 CCS-C-CAT-EDGE))))
+
+(define (ccs-cat-v1 frame)
+  (append (ccs-cat-body-v1)
+          (ccs-cat-tail-v1 frame)
+          (ccs-cat-eyes frame)
+          (ccs-cat-antenna frame)))
+
+; ─── Cat v2 — cyber-winged (evolved: v1 + 4 wing voxels + 3-antenna array) ───
+; Body adds 4 wing voxels — 2 wings extending outward from shoulders.
+(define (ccs-cat-body-v2)
+  (append (ccs-cat-body-v1)
+          ; Left wing (2 voxels extending left from shoulder)
+          (list (vx 1 5 2 CCS-C-CAT-EDGE)
+                (vx 0 5 2 CCS-C-CAT-EDGE))
+          ; Right wing (2 voxels extending right from shoulder)
+          (list (vx 9 5 4 CCS-C-CAT-EDGE)
+                (vx 10 5 4 CCS-C-CAT-EDGE))))
+
+; 3-antenna array (vs single antenna in v0/v1) — base + tip × 3 positions.
+(define (ccs-cat-antenna-v2 frame)
+  (let ((blink? (not (= 0 (modulo frame 30)))))
+    (append
+      (list (vx 6 9 2 CCS-C-CAT-EDGE)
+            (vx 7 9 2 CCS-C-CAT-EDGE)
+            (vx 8 9 2 CCS-C-CAT-EDGE))
+      (if blink?
+          (list (vx 6 10 2 CCS-C-ANTENNA)
+                (vx 7 10 2 CCS-C-ANTENNA)
+                (vx 8 10 2 CCS-C-ANTENNA))
+          (list (vx 6 10 2 CCS-C-ANTENNA-DIM)
+                (vx 7 10 2 CCS-C-ANTENNA-DIM)
+                (vx 8 10 2 CCS-C-ANTENNA-DIM))))))
+
+(define (ccs-cat-v2 frame)
+  (append (ccs-cat-body-v2)
+          (ccs-cat-tail-v1 frame)
+          (ccs-cat-eyes frame)
+          (ccs-cat-antenna-v2 frame)))
+
+; Cat dispatch — returns voxel list for the current *ccs-cat-version*.
+; This is the "code is life" pivot — visual form IS the version state.
+(define (ccs-cat frame)
+  (cond ((= *ccs-cat-version* 0) (ccs-cat-v0 frame))
+        ((= *ccs-cat-version* 1) (ccs-cat-v1 frame))
+        ((= *ccs-cat-version* 2) (ccs-cat-v2 frame))
+        (else (ccs-cat-v0 frame))))
 
 ; ─── Background buildings (4 distant cyber towers) ───
 ; Distributed across screen via iso projection: high-z towers land on the
