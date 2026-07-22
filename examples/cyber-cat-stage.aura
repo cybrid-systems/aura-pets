@@ -84,3 +84,104 @@
           (display (vr-ascii-dump!))
           (newline))
         (loop (+ frame 1))))))
+
+; Evolve demo — cat cycles through v0 → v1 → v2 → v0 each frame so the
+; viewer sees the morph sequence (the "code is life" visible drama).
+; Frame count should be a multiple of 3 for a clean loop.
+(define (cyber-cat-stage-evolve n)
+  (tui:init "aura-pets Cyber Cat Stage Evolve" W H #f)
+  (tui:hide-cursor)
+  (vr-init! W H 40 3)
+  (let loop ((frame 0))
+    (if (>= frame n)
+        (begin (tui:show-cursor) (tui:shutdown) "DONE")
+      (begin
+        (set! *ccs-cat-version* (modulo frame 3))
+        (vr-ascii-clear!)
+        (vr-frame! 12 16 32 (ccs-scene frame))
+        (display "\n=== Evolve Frame ")
+        (display (number->string frame))
+        (display " ver=v")
+        (display (number->string *ccs-cat-version*))
+        (display " voxels=")
+        (display (number->string (length (ccs-scene frame))))
+        (display " ===\n")
+        (display (vr-ascii-dump!))
+        (newline))
+        (loop (+ frame 1))))))
+
+; ─── Live interactive mode ───
+; Real event loop — player presses e to evolve the cat (ccs-evolve!),
+; r to reset to v0, q to quit. This is the "code is life" killer feature
+; entry point: every e-press mutates *ccs-cat-version*, and the next frame
+; renders the new voxel form (v0 → v1 → v2 → v0 ...). Camera stays
+; fixed at iso-3/4; arrow-key orbit is a follow-up.
+
+(define *live-cam-x* 40)
+(define *live-cam-y* 3)
+(define *live-running?* #t)
+(define *live-evolve-count* 0)
+
+; Handle one tui:read-event result. Tag "quit" or key "q"/"Q" stops the
+; loop. Key "e" or " " triggers ccs-evolve!. Key "r" resets to v0.
+(define (live-on-event e)
+  (cond
+    ((not (pair? e)) #t)
+    ((string=? (car e) "quit") (set! *live-running?* #f))
+    ((string=? (car e) "key")
+     (let ((ch (cdr e)))
+       (cond
+         ((or (string=? ch "q") (string=? ch "Q"))
+          (set! *live-running?* #f))
+         ((or (string=? ch "e") (string=? ch " "))
+          (ccs-evolve!)
+          (set! *live-evolve-count* (+ *live-evolve-count* 1)))
+         ((or (string=? ch "r") (string=? ch "R"))
+          (set! *ccs-cat-version* 0)
+          (set! *live-evolve-count* 0))
+         (else #t))))
+    (else #t)))
+
+; Interactive cyber-cat stage — runs until *live-running?* becomes #f.
+; Drains pending input (non-blocking), then briefly blocks (8ms) so
+; keystrokes are responsive without busy-spinning.
+(define (cyber-cat-stage-live)
+  (tui:init "aura-pets Cyber Cat Stage (live)" W H #t)
+  (tui:raw-mode-on)
+  (tui:hide-cursor)
+  (vr-init! W H *live-cam-x* *live-cam-y*)
+  (let loop ((frame 0))
+    (if (not *live-running?*)
+        (begin
+          (tui:show-cursor)
+          (tui:raw-mode-off)
+          (tui:shutdown)
+          (display "\nDONE — evolved " (number->string *live-evolve-count*) " times\n")
+          "BYE")
+      (begin
+        (vr-init! W H *live-cam-x* *live-cam-y*)
+        (vr-ascii-clear!)
+        (vr-frame! 12 16 32 (ccs-scene frame))
+        (display "\n=== Live Frame ")
+        (display (number->string frame))
+        (display " ver=v")
+        (display (number->string *ccs-cat-version*))
+        (display " cam=(")
+        (display (number-to-string *live-cam-x*))
+        (display ",")
+        (display (number->string *live-cam-y*))
+        (display ") evolved=")
+        (display (number->string *live-evolve-count*))
+        (display " ===\n")
+        (display "Keys: e/space=evolve, r=reset v0, q=quit\n")
+        (display (vr-ascii-dump!))
+        (newline)
+        (let drain ((n 0))
+          (if (>= n 12) #t
+            (let ((e (tui:read-event 0)))
+              (if e
+                  (begin (live-on-event e) (drain (+ n 1)))
+                #t))))
+        (let ((e (tui:read-event 8)))
+          (if e (live-on-event e) #t))
+        (loop (+ frame 1))))))

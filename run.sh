@@ -90,6 +90,9 @@ USAGE
       MODE="cyber-orbit"
       if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then FRAMES="$2"; shift 2; else shift; fi
       ;;
+    --cyber-live)
+      MODE="cyber-live"
+      ;;
     --example) EXAMPLE="$2"; shift 2 || shift ;;
     *) echo "Unknown: $1" >&2; exit 1 ;;
   esac
@@ -124,6 +127,12 @@ case "$MODE" in
     EXAMPLE="examples/cyber-cat-stage.aura"
     LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\")"
     EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-orbit $FRAMES))"
+    ;;
+  cyber-live)
+    # Interactive cyber cat stage — real event loop with /evolve + q.
+    EXAMPLE="examples/cyber-cat-stage.aura"
+    LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\")"
+    EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-live))"
     ;;
 esac
 
