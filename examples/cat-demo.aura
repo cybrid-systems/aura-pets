@@ -67,32 +67,6 @@
     ; full-width Grok-style box
     (try (prompt-set-width! (clamp-n w 40 220)) (catch (e) #f))
     #t))
-(define BAR0 "..........")
-(define BAR1 "=.........")
-(define BAR2 "==........")
-(define BAR3 "===.......")
-(define BAR4 "====......")
-(define BAR5 "=====.....")
-(define BAR6 "======....")
-(define BAR7 "=======...")
-(define BAR8 "========..")
-(define BAR9 "=========.")
-(define BAR10 "==========")
-
-(define (bar n)
-  (cond
-    ((<= n 0) BAR0)
-    ((= n 1) BAR1)
-    ((= n 2) BAR2)
-    ((= n 3) BAR3)
-    ((= n 4) BAR4)
-    ((= n 5) BAR5)
-    ((= n 6) BAR6)
-    ((= n 7) BAR7)
-    ((= n 8) BAR8)
-    ((= n 9) BAR9)
-    (else BAR10)))
-
 (define (clamp-x x)
   (if (< x 1) 1
     (if (> x (- W CAT-W 1)) (- W CAT-W 1) x)))
@@ -101,9 +75,23 @@
   (if (< y SCENE-Y0) SCENE-Y0
     (if (> y (- SCENE-Y1 CAT-H)) (- SCENE-Y1 CAT-H) y)))
 
-; Clean 2-line HUD (kids care loop first; combat only when hurt).
-; Row 0: who + love + scene name
-; Row 1: yum / heart / zest bars (+ life only if not full)
+; Wipe a full HUD row (kills leftover glyphs like stray "sprite" text).
+(define (hud-clear-row! row)
+  (let ((c BG))
+    (let loop ((x 0))
+      (if (>= x W) #t
+        (begin
+          (tui:cell x row " " c c 0)
+          (loop (+ x 1)))))))
+
+; Care vitals as short numbers (0-10) — no ====== bars.
+(define (hud-vital n)
+  (let ((v (if (number? n) n 0)))
+    (number->string (if (< v 0) 0 (if (> v 10) 10 v)))))
+
+; Clean 2-line HUD.
+; Row 0: Mochi · form · love · mood · scene
+; Row 1: yum N  heart N  zest N  (+ life only if hurt)
 (define (draw-hud! pet frame-n)
   (let* ((mood (game-mood-kid pet))
          (form (pet-form-name (pet-version pet)))
@@ -114,29 +102,33 @@
              "Mochi · " form
              " · love" (game-love-stars)
              " · " mood
-             (if (and (string? theme) (> (string-length theme) 0))
+             (if (and (string? theme) (> (string-length theme) 0)
+                      (< (string-length theme) 24))
                  (string-append " · " theme)
                "")))
          (hurt? (< (combat-hp) (combat-max)))
          (line1
            (string-append
-             "yum " (bar (pet-hunger pet))
-             "  heart " (bar (pet-mood pet))
-             "  zest " (bar (pet-energy pet))
+             "yum " (hud-vital (pet-hunger pet))
+             "   heart " (hud-vital (pet-mood pet))
+             "   zest " (hud-vital (pet-energy pet))
              (if hurt?
                  (string-append
-                   "  life "
+                   "   life "
                    (number->string (combat-hp))
                    "/"
                    (number->string (combat-max)))
                "")
-             (if (and (string? tut) (> (string-length tut) 0))
-                 (string-append "  " tut)
+             (if (and (string? tut) (> (string-length tut) 0)
+                      (< (string-length tut) 20))
+                 (string-append "   " tut)
                "")
-             (if (nl-busy?) "  ..." ""))))
-    (draw-text 1 0 (prompt-clip-cols line0 (- W 2)) TITLE-CYAN BG)
-    (draw-text 1 1
-               (prompt-clip-cols line1 (- W 2))
+             (if (nl-busy?) "   ..." ""))))
+    ; Clear then paint so nothing bleeds under the status strip.
+    (hud-clear-row! 0)
+    (hud-clear-row! 1)
+    (draw-text 1 0 line0 TITLE-CYAN BG)
+    (draw-text 1 1 line1
                (if (string=? mood "sad") BAR-LO BAR-FG) BG)
     #t))
 
@@ -175,11 +167,12 @@
     (world-draw-bg! W H SCENE-Y0 SCENE-Y1 frame-n)
     (world-draw-npcs! frame-n)
     (battle-draw-npc-hud! frame-n)
-    (draw-hud! pet frame-n)
     (draw-pixel-cat! cat-x draw-y blink (game-mood-kid pet)
                      (pet-version pet) pose phase (battle-face))
     (battle-draw-overlay!)
     (draw-speech! pet cat-x cat-y frame-n)
+    ; HUD last among scene layers so vitals never get overwritten by sprites.
+    (draw-hud! pet frame-n)
     ; log dim cyan on box fill; input bright; cursor black-on-white
     (prompt-draw! 11189196 IN-FG BG 0 16777215)
     (tui:present)
