@@ -124,12 +124,22 @@
                  (string-append "   " tut)
                "")
              (if (nl-busy?) "   ..." ""))))
-    ; Clear then paint so nothing bleeds under the status strip.
+    ; Clear full rows, paint text, then pad trailing cells with spaces
+    ; so any leftover glyphs (corrupted "" → "sprite") cannot stick.
     (hud-clear-row! 0)
     (hud-clear-row! 1)
     (draw-text 1 0 line0 TITLE-CYAN BG)
     (draw-text 1 1 line1
                (if (string=? mood "sad") BAR-LO BAR-FG) BG)
+    (let ((pad0 (+ 1 (string-length line0)))
+          (pad1 (+ 1 (string-length line1)))
+          (c BG))
+      (let loop ((x pad0))
+        (if (>= x W) #t
+          (begin (tui:cell x 0 " " c c 0) (loop (+ x 1)))))
+      (let loop ((x pad1))
+        (if (>= x W) #t
+          (begin (tui:cell x 1 " " c c 0) (loop (+ x 1))))))
     #t))
 
 (define (pose-face pose blink mood)

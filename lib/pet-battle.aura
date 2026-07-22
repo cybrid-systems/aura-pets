@@ -146,14 +146,22 @@
         ((>= pct 30) (rgb 255 200 60))
         (else (rgb 255 70 70))))))
 
+; Avoid "" literals — Aura can clobber empty-string heap slots (shows as
+; garbage like "sprite" on screen). Always build fresh empty via substring.
+(define (battle-empty)
+  (substring "x" 0 0))
+
 ; Draw labeled bar at (col,row) width cells of fill.
+; Prefer soft blocks over =..... for readability.
 (define (draw-hp-bar! col row cur maxn width label)
   (let* ((w (if (< width 4) 4 width))
          (filled (if (<= maxn 0) 0
                    (quotient (* cur w) maxn)))
          (fg (hp-bar-color cur maxn))
          (dim (rgb 50 50 60))
-         (lab (if label label "")))
+         (lab (if (and (string? label) (> (string-length label) 0))
+                  label
+                (battle-empty))))
     (if (> (string-length lab) 0)
         (draw-text col row lab (rgb 180 200 220) 0)
       #t)
@@ -165,7 +173,7 @@
         (if (>= i w) #t
           (begin
             (draw-text (+ bx 1 i) row
-                       (if (< i filled) "=" ".")
+                       (if (< i filled) "#" "-")
                        (if (< i filled) fg dim) 0)
             (loop (+ i 1)))))
       (draw-text (+ bx 1 w) row "]" (rgb 120 120 140) 0)
@@ -173,7 +181,7 @@
 
 ; Compact mini bar for NPCs (no label): width 6
 (define (draw-npc-hp-bar! col row cur maxn)
-  (draw-hp-bar! col row cur maxn 6 "")
+  (draw-hp-bar! col row cur maxn 6 (battle-empty))
   #t)
 
 ; ── FX ──
@@ -658,12 +666,21 @@
              (hp (combat-npc-hp-get name kind))
              (mx (combat-npc-max kind))
              (dying (npc-dying? name))
-             (flash (> (npc-flash-get name) 0)))
-        (if dying
-            (draw-text x y "..." (rgb 255 80 80) 0)
-          (begin
-            (draw-npc-hp-bar! x (- y 1) hp mx)
-            (if flash
-                (draw-text (+ x 4) y "!" (rgb 255 255 0) 0)
-              #t)))
+             (flash (> (npc-flash-get name) 0))
+             ; decor props (plane/star props-as-npc) — no combat chrome
+             (decor? (or (string=? kind "decor") (string=? kind "prop")
+                         (string=? kind "scenery"))))
+        (cond
+          (dying
+           (draw-text x y "..." (rgb 255 80 80) 0))
+          (decor? #t)
+          (else
+           (begin
+             ; keep bars inside the scene (never on HUD rows 0-1)
+             (if (> (- y 1) 1)
+                 (draw-npc-hp-bar! x (- y 1) hp mx)
+               #t)
+             (if flash
+                 (draw-text (+ x 4) y "!" (rgb 255 255 0) 0)
+               #t))))
         (loop (cdr xs))))))
