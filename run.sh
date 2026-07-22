@@ -51,6 +51,7 @@ Aura Pets
   ./run.sh play            interactive
   ./run.sh --demo [N]      headless frames
   ./run.sh --cyber [N]     3D cyber cat stage (headless frames)
+  ./run.sh --cyber-orbit [N] 3D cyber cat stage orbit showcase (headless frames)
   ./run.sh smoke
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
@@ -85,6 +86,10 @@ USAGE
       MODE="cyber"
       if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then FRAMES="$2"; shift 2; else shift; fi
       ;;
+    --cyber-orbit)
+      MODE="cyber-orbit"
+      if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then FRAMES="$2"; shift 2; else shift; fi
+      ;;
     --example) EXAMPLE="$2"; shift 2 || shift ;;
     *) echo "Unknown: $1" >&2; exit 1 ;;
   esac
@@ -113,6 +118,12 @@ case "$MODE" in
     EXAMPLE="examples/cyber-cat-stage.aura"
     LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\")"
     EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-anim $FRAMES))"
+    ;;
+  cyber-orbit)
+    # 4-stop camera swing showcase (non-interactive orbit preview).
+    EXAMPLE="examples/cyber-cat-stage.aura"
+    LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\")"
+    EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-orbit $FRAMES))"
     ;;
 esac
 

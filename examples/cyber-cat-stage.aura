@@ -44,4 +44,41 @@
         (newline)
         (loop (+ frame 1))))))
 
-(cyber-cat-stage-anim 6)
+; Orbit showcase — render scene at 4 camera positions in sequence
+; (non-interactive, avoids event-handling complexity). Each frame cycles
+; cam_x/cam_y through a 4-stop swing, so the viewer sees the cat+platform
+; from front/right/back/left in 4-frame cycles. Frame count should be a
+; multiple of 4 for a clean loop.
+(define (cyber-cat-stage-orbit n)
+  (tui:init "aura-pets Cyber Cat Stage Orbit" W H #f)
+  (tui:hide-cursor)
+  (let loop ((frame 0))
+    (if (>= frame n)
+        (begin (tui:show-cursor) (tui:shutdown) "DONE")
+      (begin
+        ; 4-stop swing: front → right-front → right-back → left-back
+        (let* ((step (modulo frame 4))
+               (cam-x (cond ((= step 0) 40)
+                            ((= step 1) 48)
+                            ((= step 2) 40)
+                            (else 32)))
+               (cam-y (cond ((= step 0) 3)
+                            ((= step 1) 2)
+                            ((= step 2) 1)
+                            (else 2))))
+          (vr-init! W H cam-x cam-y)
+          (vr-frame! 12 16 32 (ccs-scene frame))
+          (display "\n=== Orbit Frame ")
+          (display (number->string frame))
+          (display " stop=")
+          (display (number->string step))
+          (display " cam=(")
+          (display (number->string cam-x))
+          (display ",")
+          (display (number->string cam-y))
+          (display ") voxels=")
+          (display (number->string (length (ccs-scene frame))))
+          (display " ===\n")
+          (display (tui:frame-ansi))
+          (newline))
+        (loop (+ frame 1))))))
