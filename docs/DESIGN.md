@@ -30,6 +30,7 @@ care → happier pet → love up → evolve unlock → new look → keep caring
 | **Speech** | bubble under pet | last reaction from **eDSL rules** |
 | **Evolve** | sparkle + new colors | atomic-swap version when love+mood+hunger ready |
 | **eDSL brain** | `teach feed Hi` / `brain` / free NL | rule list mutated online + AST commit |
+| **Genome (Slice A)** | `/brain` `/diff` `/mutate` `/guide` | traits self-mutate; visible before→after |
 | **NL director** | free English in prompt | MiniMax → ops → world/eDSL + set-code |
 
 No death. Low vitals → sad face + nudge text only.

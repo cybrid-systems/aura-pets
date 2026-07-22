@@ -1,6 +1,6 @@
 # Aura Pets
 
-> Terminal pet for kids — **you move the cat**, feed/play/sleep with **animations**, and **teach** it new lines (eDSL mutation).
+> Terminal pet — **life as evolving code**. Feed/play/sleep, **teach** speech rules, watch the genome **self-mutate** (`/brain` `/diff` `/mutate`).
 
 Design: [docs/DESIGN.md](docs/DESIGN.md) · Business here · Render bugs → **aura**
 
@@ -29,7 +29,11 @@ cd /path/to/aura-pets
 | `/weapon` [name] | Cycle/set: `shot` `double` `beam` `bomb` `fire` |
 | `/fight` | Melee if close |
 | `/heal` | Full HP (costs energy) |
-| free text (no `/`) | **LLM director** (EN + 中文), async |
+| `/brain` | **Genome + speech rules** (living source) |
+| `/diff` | Before → after last evolution |
+| `/mutate` | Force one self-rewrite (toast + log) |
+| `/guide lazy` | Steer traits (fierce/clingy/curious/…) |
+| free text | Guide phrases (`be more clingy`) or **LLM director** |
 
 ### Pure Aura LLM / worldgen (no Python required)
 

@@ -11,8 +11,9 @@
   (set! *love* 0)
   (set! *care-count* 0)
   (set! *last-act* "idle")
-  (set! *speech* "Hi! Arrows move me. 1 2 3 care!")
+  (set! *speech* "Hi! I evolve my own code. /brain /diff | 1 2 3 care")
   (edsl-reset!)
+  (try (genome-reset!) (catch (e) #f))
   (anim-reset!)
   #t)
 
@@ -31,6 +32,16 @@
   *love*)
 
 (define (game-soft-tick pet)
+  ; Self-evolution tick (Slice A): low-rate genome rewrite, toast in speech.
+  (try
+    (if (genome-auto-tick!)
+        (begin
+          (set! *speech* (genome-last-toast))
+          (set! *last-act* "evolve-code")
+          (anim-start! "evolve" 10)
+          #t)
+      #f)
+    (catch (e) #f))
   (let ((h (pet-hunger pet))
         (m (pet-mood pet))
         (e (pet-energy pet)))
@@ -62,15 +73,18 @@
 
 (define (game-apply-care pet event pet-fn anim-name)
   (let ((u (pet-fn pet))
-        (delta (edsl-love-delta event)))
+        (delta (edsl-love-delta event))
+        (base (edsl-speech event)))
     (set! *care-count* (+ *care-count* 1))
     (game-add-love! delta)
     (set! *last-act* event)
-    (set! *speech* (edsl-speech event))
+    ; Trait-flavored speech — personality from living genome.
+    (set! *speech*
+      (try (genome-flavor-speech event base) (catch (e) base)))
     (anim-start! anim-name 14)
     (cons #t u)))
 
-; Parse "teach feed Hello there" → teach feed speech
+; Parse "teach feed Hello there" → teach feed speech (+ genome log)
 (define (game-try-teach! cmd)
   (let ((n (string-length cmd)))
     (if (and (>= n 6) (string=? (substring cmd 0 5) "teach")
@@ -84,10 +98,13 @@
               (if (or (= (string-length ev) 0) (= (string-length msg) 0))
                   #f
                 (begin
-                  (edsl-teach! ev msg)
-                  (set! *speech* (string-append "Learned " ev "!"))
+                  (try (genome-on-teach! ev msg)
+                       (catch (e)
+                         (begin (edsl-teach! ev msg) (edsl-aura-commit!))))
+                  (set! *speech*
+                    (try (genome-last-toast)
+                         (catch (e) (string-append "Learned " ev "!"))))
                   (set! *last-act* "teach")
-                  (edsl-aura-commit!)
                   #t)))))
       #f)))
 
@@ -111,13 +128,27 @@
      (cons #f pet))
 
     ((or (string=? cmd "help") (string=? cmd "?"))
-     (set! *speech* "Try /help  /grow /fight /eat /back")
+     (set! *speech* "Try /brain /diff /mutate /guide lazy | teach feed Hi")
      (set! *last-act* "help")
      (cons #t pet))
 
-    ((or (string=? cmd "brain") (string=? cmd "edsl"))
-     (set! *speech* (edsl-show))
+    ((or (string=? cmd "brain") (string=? cmd "edsl") (string=? cmd "genome"))
+     (set! *speech*
+       (try (genome-brain-show) (catch (e) (edsl-show))))
      (set! *last-act* "brain")
+     (cons #t pet))
+
+    ((or (string=? cmd "diff") (string=? cmd "evo") (string=? cmd "evolve-log"))
+     (set! *speech*
+       (try (string-append (genome-diff-show) " | " (genome-log-show))
+            (catch (e) "diff: n/a")))
+     (set! *last-act* "diff")
+     (cons #t pet))
+
+    ((or (string=? cmd "mutate") (string=? cmd "evolve-code"))
+     (set! *speech* (try (genome-force-mutate!) (catch (e) "mutate failed")))
+     (set! *last-act* "evolve-code")
+     (anim-start! "evolve" 12)
      (cons #t pet))
 
     ; world / gen / g — LLM (or offline) regen of bg + NPCs

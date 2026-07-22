@@ -1,0 +1,298 @@
+; lib/pet-genome.aura — Slice A: living code the player can SEE change.
+;
+; Genome = traits + generation + name + prev snapshot + evolution log.
+; Speech rules stay in pet-edsl (*edsl-rules*); genome flavors reactions
+; and records teach / self-mutate / guide as visible "code evolution".
+;
+; Load after pet-edsl.aura. Play-safe: pure data, no mid-session set-code.
+
+; ── traits 0..9 ──
+(define *g-lazy* 3)
+(define *g-clingy* 4)
+(define *g-fierce* 3)
+(define *g-curious* 5)
+(define *g-chatty* 5)
+(define *g-gen* 0)
+(define *g-name* "Kitten Mind")
+; Previous snapshot line for /diff (ASCII).
+(define *g-prev* "")
+; Recent evolution lines (newest first), max 6.
+(define *g-log* '())
+(define *g-tick* 0)
+; Soft-ticks between auto-mutate attempts (~45 frames each in play).
+(define *g-auto-every* 3)
+(define *g-last-toast* "")
+
+(define (genome-empty)
+  (substring "x" 0 0))
+
+(define (genome-clamp n)
+  (if (< n 0) 0 (if (> n 9) 9 n)))
+
+(define (genome-reset!)
+  (set! *g-lazy* 3)
+  (set! *g-clingy* 4)
+  (set! *g-fierce* 3)
+  (set! *g-curious* 5)
+  (set! *g-chatty* 5)
+  (set! *g-gen* 0)
+  (set! *g-name* "Kitten Mind")
+  (set! *g-prev* "")
+  (set! *g-log* '())
+  (set! *g-tick* 0)
+  (set! *g-last-toast* "")
+  (genome-snapshot!)
+  #t)
+
+(define (genome-gen) *g-gen*)
+(define (genome-name) *g-name*)
+(define (genome-last-toast) *g-last-toast*)
+(define (genome-lazy) *g-lazy*)
+(define (genome-clingy) *g-clingy*)
+(define (genome-fierce) *g-fierce*)
+(define (genome-curious) *g-curious*)
+(define (genome-chatty) *g-chatty*)
+
+; One-line live source (what kids/parents read as "the code").
+(define (genome-line)
+  (string-append
+    "gen" (number->string *g-gen*) " " *g-name*
+    " | lazy" (number->string *g-lazy*)
+    " clingy" (number->string *g-clingy*)
+    " fierce" (number->string *g-fierce*)
+    " curious" (number->string *g-curious*)
+    " chatty" (number->string *g-chatty*)))
+
+; /brain panel: genome + short eDSL brain.
+(define (genome-brain-show)
+  (string-append (genome-line) " || " (edsl-show)))
+
+; /diff: previous vs now.
+(define (genome-diff-show)
+  (if (= (string-length *g-prev*) 0)
+      (string-append "diff: (first gen) now " (genome-line))
+    (string-append "was: " *g-prev* "  =>  now: " (genome-line))))
+
+; Snapshot current line into *g-prev* (call BEFORE a mutation).
+(define (genome-snapshot!)
+  (set! *g-prev* (genome-line))
+  #t)
+
+(define (genome-log-take n xs)
+  (let loop ((ys xs) (acc '()) (i 0))
+    (if (or (null? ys) (>= i n))
+        (reverse acc)
+      (loop (cdr ys) (cons (car ys) acc) (+ i 1)))))
+
+(define (genome-log-push! line)
+  (set! *g-log* (genome-log-take 6 (cons line *g-log*)))
+  #t)
+
+(define (genome-log-show)
+  (if (null? *g-log*)
+      "evo-log: (none yet — wait or /mutate)"
+    (let loop ((xs *g-log*) (s "evo-log:") (n 0))
+      (if (or (null? xs) (>= n 4))
+          s
+        (loop (cdr xs)
+              (string-append s " #" (number->string (+ n 1)) " " (car xs) ";")
+              (+ n 1))))))
+
+; Pick a personality name from dominant traits.
+(define (genome-rename!)
+  (cond
+    ((and (>= *g-fierce* 7) (>= *g-fierce* *g-lazy*) (>= *g-fierce* *g-clingy*))
+     (set! *g-name* "Night Hunter"))
+    ((and (>= *g-lazy* 7) (>= *g-lazy* *g-fierce*))
+     (set! *g-name* "Sofa Philosopher"))
+    ((and (>= *g-clingy* 7) (>= *g-clingy* *g-fierce*))
+     (set! *g-name* "Velcro Buddy"))
+    ((and (>= *g-curious* 7) (>= *g-curious* *g-lazy*))
+     (set! *g-name* "Pocket Explorer"))
+    ((and (>= *g-chatty* 7) (>= *g-chatty* *g-fierce*))
+     (set! *g-name* "Chatterbox"))
+    ((and (<= *g-chatty* 2) (<= *g-fierce* 3))
+     (set! *g-name* "Quiet Shadow"))
+    ((>= *g-gen* 5)
+     (set! *g-name* "Evolved Mind"))
+    (else
+     (if (= *g-gen* 0)
+         (set! *g-name* "Kitten Mind")
+       (set! *g-name* (string-append "Mind-v" (number->string *g-gen*))))))
+  *g-name*)
+
+; Bump one trait by delta, return trait name string.
+(define (genome-bump! trait delta)
+  (cond
+    ((string=? trait "lazy")
+     (set! *g-lazy* (genome-clamp (+ *g-lazy* delta))) "lazy")
+    ((string=? trait "clingy")
+     (set! *g-clingy* (genome-clamp (+ *g-clingy* delta))) "clingy")
+    ((string=? trait "fierce")
+     (set! *g-fierce* (genome-clamp (+ *g-fierce* delta))) "fierce")
+    ((string=? trait "curious")
+     (set! *g-curious* (genome-clamp (+ *g-curious* delta))) "curious")
+    ((string=? trait "chatty")
+     (set! *g-chatty* (genome-clamp (+ *g-chatty* delta))) "chatty")
+    (else "none")))
+
+; Pick trait by simple gen rotation (no RNG primitive required).
+(define (genome-pick-trait)
+  (let ((k (modulo *g-gen* 5)))
+    (cond
+      ((= k 0) "lazy")
+      ((= k 1) "clingy")
+      ((= k 2) "fierce")
+      ((= k 3) "curious")
+      (else "chatty"))))
+
+(define (genome-pick-delta)
+  (if (= (modulo *g-gen* 2) 0) 1 -1))
+
+; Core mutation: snapshot → change → gen++ → rename → log → toast.
+; reason: "self" | "guide" | "teach" | "force"
+; Returns toast string (always non-empty on success).
+(define (genome-mutate! trait delta reason)
+  (genome-snapshot!)
+  (let ((t (genome-bump! trait delta)))
+    (set! *g-gen* (+ *g-gen* 1))
+    (genome-rename!)
+    (let ((line
+            (string-append
+              reason ":" t
+              (if (> delta 0) "+" "-")
+              (number->string (if (< delta 0) (- 0 delta) delta))
+              " -> " *g-name*)))
+      (genome-log-push! line)
+      (set! *g-last-toast*
+        (string-append "Evolved! " line " | " (genome-diff-show)))
+      ; Side-file for tooling / "code is life" artifact
+      (try
+        (write-file "/tmp/aura-pets-genome.txt"
+          (string-append (genome-line) "\n" (genome-diff-show) "\n"
+                         (genome-log-show) "\n"))
+        (catch (e) #f))
+      *g-last-toast*)))
+
+(define (genome-mutate-random! reason)
+  (genome-mutate! (genome-pick-trait) (genome-pick-delta) reason))
+
+; Soft-tick hook: every *g-auto-every* soft ticks, self-mutate once.
+; Returns #t if mutated (caller should surface toast in speech).
+(define (genome-auto-tick!)
+  (set! *g-tick* (+ *g-tick* 1))
+  (if (< *g-tick* *g-auto-every*)
+      #f
+    (begin
+      (set! *g-tick* 0)
+      (genome-mutate-random! "self")
+      #t)))
+
+; Force one evolution (debug / /mutate command).
+(define (genome-force-mutate!)
+  (genome-mutate-random! "force"))
+
+; ── Player guide phrases (EN + a few CN stems) ──
+; Returns toast string or #f if phrase not recognized.
+(define (genome-contains? hay needle)
+  (let ((nh (string-length hay))
+        (nn (string-length needle)))
+    (if (or (= nn 0) (> nn nh))
+        #f
+      (let loop ((i 0))
+        (if (> (+ i nn) nh)
+            #f
+          (if (string=? (substring hay i (+ i nn)) needle)
+              #t
+            (loop (+ i 1))))))))
+
+(define (genome-downcase-ascii s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (acc (genome-empty)))
+      (if (>= i n)
+          acc
+        (let* ((ch (substring s i (+ i 1)))
+               (c (char->integer (car (string->list ch))))
+               (out (if (and (>= c 65) (<= c 90))
+                        (list->string (list (integer->char (+ c 32))))
+                      ch)))
+          (loop (+ i 1) (string-append acc out)))))))
+
+; Guide: bump traits from free text / /guide args.
+(define (genome-guide! phrase)
+  (let ((p (genome-downcase-ascii phrase)))
+    (cond
+      ((or (genome-contains? p "lazy") (genome-contains? p "lazier")
+           (genome-contains? p "sleepier") (genome-contains? p "tired")
+           (genome-contains? p "sofa"))
+       (genome-mutate! "lazy" 2 "guide"))
+      ((or (genome-contains? p "cling") (genome-contains? p "cuddle")
+           (genome-contains? p "sticky") (genome-contains? p "needy")
+           (genome-contains? p "velcro") (genome-contains? p "lovey"))
+       (genome-mutate! "clingy" 2 "guide"))
+      ((or (genome-contains? p "fierce") (genome-contains? p "mean")
+           (genome-contains? p "angry") (genome-contains? p "hunter")
+           (genome-contains? p "brave") (genome-contains? p "scary"))
+       (genome-mutate! "fierce" 2 "guide"))
+      ((or (genome-contains? p "curious") (genome-contains? p "explore")
+           (genome-contains? p "nosy") (genome-contains? p "wander"))
+       (genome-mutate! "curious" 2 "guide"))
+      ((or (genome-contains? p "quiet") (genome-contains? p "shy")
+           (genome-contains? p "silent") (genome-contains? p "mute"))
+       (genome-mutate! "chatty" -2 "guide"))
+      ((or (genome-contains? p "chatty") (genome-contains? p "talky")
+           (genome-contains? p "loud") (genome-contains? p "speak"))
+       (genome-mutate! "chatty" 2 "guide"))
+      ((or (genome-contains? p "calm") (genome-contains? p "soft")
+           (genome-contains? p "gentle") (genome-contains? p "kind"))
+       (genome-mutate! "fierce" -2 "guide"))
+      ((or (genome-contains? p "active") (genome-contains? p "energetic")
+           (genome-contains? p "hyper"))
+       (genome-mutate! "lazy" -2 "guide"))
+      (else #f))))
+
+; True if free text looks like a guide phrase (prefer over NL director).
+(define (genome-looks-like-guide? phrase)
+  (let ((p (genome-downcase-ascii phrase)))
+    (or (genome-contains? p "lazy") (genome-contains? p "cling")
+        (genome-contains? p "fierce") (genome-contains? p "mean")
+        (genome-contains? p "curious") (genome-contains? p "quiet")
+        (genome-contains? p "chatty") (genome-contains? p "calm")
+        (genome-contains? p "cuddle") (genome-contains? p "brave")
+        (genome-contains? p "active") (genome-contains? p "hunter")
+        (genome-contains? p "more ") (genome-contains? p "less ")
+        (genome-contains? p "make ") (genome-contains? p "be more"))))
+
+; Teach speech + evolution log (keeps edsl as speech AST).
+(define (genome-on-teach! event speech)
+  (genome-snapshot!)
+  (edsl-teach! event speech)
+  (set! *g-gen* (+ *g-gen* 1))
+  (genome-rename!)
+  (let ((line (string-append "teach:" event "->" speech)))
+    (genome-log-push! line)
+    (set! *g-last-toast*
+      (string-append "Code edit! " line " | gen" (number->string *g-gen*)))
+    (edsl-aura-commit!)
+    *g-last-toast*))
+
+; Flavor base eDSL speech using traits (visible personality).
+(define (genome-flavor-speech event base)
+  (cond
+    ((and (string=? event "feed") (>= *g-lazy* 7))
+     "eh... food. ok.")
+    ((and (string=? event "feed") (>= *g-clingy* 7))
+     "only if you stay close!")
+    ((and (string=? event "play") (>= *g-fierce* 7))
+     "RAWR play-fight!!")
+    ((and (string=? event "play") (>= *g-lazy* 7))
+     "do i have to move...")
+    ((and (string=? event "sleep") (>= *g-curious* 7))
+     "zzz but one more peek...")
+    ((and (string=? event "idle") (>= *g-chatty* 7))
+     "hey! hey! look at me!")
+    ((and (string=? event "idle") (<= *g-chatty* 2))
+     "...")
+    ((and (string=? event "idle") (>= *g-clingy* 7))
+     "don't leave...")
+    (else base)))

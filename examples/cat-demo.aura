@@ -234,6 +234,20 @@
            (game-set-speech! "No one nearby. Walk closer!")
            (prompt-set-log! (game-speech))
            (cons #t pet)))))
+    ; Slice A: free-text personality guide before LLM director
+    ((try (genome-looks-like-guide? cmd) (catch (e) #f))
+     (let ((toast (try (genome-guide! cmd) (catch (e) #f))))
+       (if toast
+           (begin
+             (game-set-speech! toast)
+             (prompt-set-log! toast)
+             (anim-start! "evolve" 12)
+             (plog "genome" "guide")
+             (cons #t pet))
+         (begin
+           (game-set-speech! "Guide: lazy fierce clingy curious quiet chatty")
+           (prompt-set-log! (game-speech))
+           (cons #t pet)))))
     ; Free language → async LLM director (non-blocking)
     ((nl-should-handle? cmd)
      (if (nl-busy?)
@@ -540,6 +554,12 @@
   (if (and *p-running* (= (modulo *p-tick* 45) 0))
       (begin
         (set! *p-pet* (game-soft-tick *p-pet*))
+        ; Surface self-evolution toast on the prompt status line.
+        (if (string=? (game-last-act) "evolve-code")
+            (begin
+              (prompt-set-log! (game-speech))
+              (plog "genome" (try (genome-line) (catch (e) "tick-evo"))))
+          #t)
         (plog "tick" (pet-snap *p-pet*)))
     #t)
   #t)
@@ -584,9 +604,10 @@
   (plog-flush!)
   (game-set-speech!
     (string-append "Welcome! " (world-theme)
-                   " " (number->string W) "x" (number->string H)
-                   " | C-d quit | 2x C-c quit | Space fire"))
+                   " | /brain /diff /mutate | guide: lazy/fierce"
+                   " | C-d quit"))
   (prompt-set-log! (game-speech))
+  (try (plog "genome" (genome-line)) (catch (e) #f))
   (plog "ready" "entering-play-loop")
   (plog-flush!)
   ; Frame cap to calm flicker on terminal TUI. Aura has no tui:sleep

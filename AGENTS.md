@@ -20,8 +20,9 @@ Product design: `docs/DESIGN.md`. Current ship target: **R1 Kids MVP**.
 
 `run.sh` prefers `AURA_GROK_HOME/build/aura` and sets `AURA_STDLIB_DIR` + `AURA_PATH`.
 
-Load order: lifecycle → edsl → anim → game → **pet-log** → pixel → **tui-prompt** → example.
+Load order: lifecycle → edsl → **genome** → anim → game → **pet-log** → pixel → **tui-prompt** → example.
 (`tui-prompt` before example: `play-handle-event!` binds `prompt-handle` at load time.)
+(`genome` after edsl: speech AST + trait evolution for Slice A.)
 
 ## Debug log (play exits)
 

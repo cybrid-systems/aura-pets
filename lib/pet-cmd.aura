@@ -55,8 +55,8 @@
 
 (define (cmd-help-text)
   (string-append
-    "/eat /grow /bg cyber|stars|ocean|city|sunset|meadow "
-    "/fire /world /help | type: cyber rain / starry night"))
+    "/brain /diff /mutate /guide lazy|fierce|clingy "
+    "/teach feed Hi | /eat /grow /fire /help"))
 
 ; Core slash dispatcher. pet is the live pet record.
 (define (cmd-run pet raw)
@@ -93,10 +93,48 @@
        (set! *last-act* "form")
        (cons #t pet))
 
-      ((or (string=? head "brain") (string=? head "edsl"))
-       (set! *speech* (edsl-show))
+      ((or (string=? head "brain") (string=? head "edsl")
+           (string=? head "genome") (string=? head "code"))
+       (set! *speech*
+         (try (genome-brain-show) (catch (e) (edsl-show))))
        (set! *last-act* "brain")
        (cons #t pet))
+
+      ((or (string=? head "diff") (string=? head "evo")
+           (string=? head "log") (string=? head "evolutions"))
+       (set! *speech*
+         (try (string-append (genome-diff-show) " | " (genome-log-show))
+              (catch (e) "diff: n/a")))
+       (set! *last-act* "diff")
+       (cons #t pet))
+
+      ((or (string=? head "mutate") (string=? head "evolve-code")
+           (string=? head "rewrite"))
+       (set! *speech*
+         (try (genome-force-mutate!) (catch (e) "mutate failed")))
+       (set! *last-act* "evolve-code")
+       (anim-start! "evolve" 12)
+       (cons #t pet))
+
+      ; /guide lazy | /guide more fierce | free: "be more clingy"
+      ((or (string=? head "guide") (string=? head "shape")
+           (string=? head "temper"))
+       (if (= (string-length args) 0)
+           (begin
+             (set! *speech* "Usage: /guide lazy|fierce|clingy|curious|quiet")
+             (set! *last-act* "guide")
+             (cons #t pet))
+         (let ((toast (try (genome-guide! args) (catch (e) #f))))
+           (if toast
+               (begin
+                 (set! *speech* toast)
+                 (set! *last-act* "evolve-code")
+                 (anim-start! "evolve" 12)
+                 (cons #t pet))
+             (begin
+               (set! *speech* "Try: lazy fierce clingy curious quiet chatty calm")
+               (set! *last-act* "guide")
+               (cons #t pet))))))
 
       ; ── care ──
       ((or (string=? head "eat") (string=? head "feed") (string=? head "1")
@@ -298,4 +336,7 @@
         (string=? head "brain") (string=? head "quit") (string=? head "say")
         (string=? head "teach") (string=? head "atk") (string=? head "attack")
         (string=? head "fire") (string=? head "shoot") (string=? head "weapon")
-        (string=? head "wpn") (string=? head "gun"))))
+        (string=? head "wpn") (string=? head "gun")
+        (string=? head "diff") (string=? head "mutate") (string=? head "guide")
+        (string=? head "genome") (string=? head "code") (string=? head "evo")
+        (string=? head "rewrite") (string=? head "temper"))))
