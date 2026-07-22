@@ -6,11 +6,9 @@
 ;
 ; Load order: voxel-render → cyber-cat-scene → this file.
 ;
-; Note: tui:frame-ansi emits literal CSI cursor jumps (\x1b[r;cH) into the
-; captured output (fine in a live terminal, ugly in diffs/grep). Stripping
-; them with a Scheme-level loop blows Aura's 700-frame recursion limit on a
-; full frame (one frame-ansi = ~5KB = thousands of bytes). Follow-up commit
-; will move strip-ansi to a C++ primitive or batch the recursion.
+; Note: output uses vr-ascii-dump! (parallel ASCII buffer in voxel-render.aura)
+; instead of tui:frame-ansi — emits a plain 80x24 text grid with no CSI
+; escapes. Demo-captured frames are diff/grep-clean.
 
 (require "std/tui/sprite" all:)
 (require "std/tui/canvas" all:)
@@ -28,7 +26,9 @@
     (if (>= frame n)
         (begin (tui:show-cursor) (tui:shutdown) "DONE")
       (begin
-        ; Render one frame: sky bg + scene voxels (painter-sorted).
+        ; Clear ASCII buffer, then render (vr-draw-voxel! populates both
+        ; tui cell buffer + parallel ASCII buffer — see voxel-render.aura).
+        (vr-ascii-clear!)
         (vr-frame! 12 16 32 (ccs-scene frame))
         ; HUD line: frame # + theme + voxel count (sanity).
         (display "\n=== Frame ")
@@ -40,7 +40,8 @@
         (display " voxels=")
         (display (number->string (length (ccs-scene frame))))
         (display " ===\n")
-        (display (tui:frame-ansi))
+        ; Clean ASCII dump — no ANSI escapes, no recursion pressure.
+        (display (vr-ascii-dump!))
         (newline)
         (loop (+ frame 1))))))
 
@@ -67,6 +68,7 @@
                             ((= step 2) 1)
                             (else 2))))
           (vr-init! W H cam-x cam-y)
+          (vr-ascii-clear!)
           (vr-frame! 12 16 32 (ccs-scene frame))
           (display "\n=== Orbit Frame ")
           (display (number->string frame))
@@ -79,6 +81,6 @@
           (display ") voxels=")
           (display (number->string (length (ccs-scene frame))))
           (display " ===\n")
-          (display (tui:frame-ansi))
+          (display (vr-ascii-dump!))
           (newline))
         (loop (+ frame 1))))))
