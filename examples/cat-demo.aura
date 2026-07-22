@@ -75,7 +75,11 @@
   (if (< y SCENE-Y0) SCENE-Y0
     (if (> y (- SCENE-Y1 CAT-H)) (- SCENE-Y1 CAT-H) y)))
 
-; Wipe a full HUD row (kills leftover glyphs like stray "sprite" text).
+; Fresh empty — never use "" literals (Aura may clobber them → "sprite" junk).
+(define (hud-empty)
+  (substring "x" 0 0))
+
+; Wipe a full HUD row.
 (define (hud-clear-row! row)
   (let ((c BG))
     (let loop ((x 0))
@@ -95,8 +99,8 @@
 (define (draw-hud! pet frame-n)
   (let* ((mood (game-mood-kid pet))
          (form (pet-form-name (pet-version pet)))
-         (theme (try (world-theme) (catch (e) "")))
-         (tut (try (tut-hud) (catch (e) "")))
+         (theme (try (world-theme) (catch (e) (hud-empty))))
+         (tut (try (tut-hud) (catch (e) (hud-empty))))
          (line0
            (string-append
              "Mochi · " form
@@ -105,7 +109,7 @@
              (if (and (string? theme) (> (string-length theme) 0)
                       (< (string-length theme) 24))
                  (string-append " · " theme)
-               "")))
+               (hud-empty))))
          (hurt? (< (combat-hp) (combat-max)))
          (line1
            (string-append
@@ -118,28 +122,17 @@
                    (number->string (combat-hp))
                    "/"
                    (number->string (combat-max)))
-               "")
+               (hud-empty))
              (if (and (string? tut) (> (string-length tut) 0)
                       (< (string-length tut) 20))
                  (string-append "   " tut)
-               "")
-             (if (nl-busy?) "   ..." ""))))
-    ; Clear full rows, paint text, then pad trailing cells with spaces
-    ; so any leftover glyphs (corrupted "" → "sprite") cannot stick.
+               (hud-empty))
+             (if (nl-busy?) "   ..." (hud-empty)))))
     (hud-clear-row! 0)
     (hud-clear-row! 1)
     (draw-text 1 0 line0 TITLE-CYAN BG)
     (draw-text 1 1 line1
                (if (string=? mood "sad") BAR-LO BAR-FG) BG)
-    (let ((pad0 (+ 1 (string-length line0)))
-          (pad1 (+ 1 (string-length line1)))
-          (c BG))
-      (let loop ((x pad0))
-        (if (>= x W) #t
-          (begin (tui:cell x 0 " " c c 0) (loop (+ x 1)))))
-      (let loop ((x pad1))
-        (if (>= x W) #t
-          (begin (tui:cell x 1 " " c c 0) (loop (+ x 1))))))
     #t))
 
 (define (pose-face pose blink mood)
