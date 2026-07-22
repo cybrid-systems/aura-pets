@@ -36,7 +36,10 @@ cd /path/to/aura-pets
 | `/npc Bunny` | Query living NPC record |
 | `/npc Bunny set hp 20` | Mutate field (also `trait fierce +2`, `ai hunter`) |
 | `/npc @near …` | Patch nearest NPC |
-| free text | Guide phrases / NPC intent (`more fierce`) or **LLM director** |
+| `/npc kind=enemy trait fierce +2` | **Batch** patch all enemies |
+| `/export` | Dump genome+NPCs → `/tmp/aura-pets-session.aura` |
+| free text | Guide / batch intent (`all enemies fiercer`) or **LLM director** |
+| `/fight` near NPC | Shows **on-hit taunt** if set (`ability:taunt`) |
 
 ### Pure Aura LLM / worldgen (no Python required)
 

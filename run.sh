@@ -72,7 +72,11 @@ Play: arrows move | 1 2 3 care | Ctrl+D quit | 2× Ctrl+C quit
     /npc Bunny            show living record (query)
     /npc Bunny set hp 20  patch field (mutate)
     /npc @near trait fierce +2
-    type: "more fierce" near an NPC → offline intent patch
+    /npc kind=enemy trait fierce +2   batch patch all enemies
+    /npc kind=friend add hp 3
+    /export               dump genome+NPCs → /tmp/aura-pets-session.aura
+    type: "more fierce" / "all enemies fiercer" → offline intent patch
+    fight: NPC on-hit taunt speech fires when set
   Slash commands (type /… then Enter):
     /eat /play /sleep     care
     /grow /back           morph forms (Kitten→…→Dragon)

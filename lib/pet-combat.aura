@@ -123,6 +123,7 @@
     u))
 
 ; One fight exchange. Returns (speech . pet).
+; Uses living entity on-hit line (taunt etc.) when entity.aura is loaded.
 (define (combat-fight! pet px py)
   (if (<= *combat-hp* 0)
       (cons "You are down! /heal first." pet)
@@ -131,8 +132,21 @@
           (cons "No one nearby. Walk closer to fight!" pet)
         (let* ((name (car npc))
                (kind (car (cdr (cdr (cdr npc)))))
+               (ent (try (entity-query-by-name name) (catch (e) #f)))
+               (empty (substring "x" 0 0))
+               (taunt
+                 (if ent
+                     (try (npc-react-speech ent "on-hit")
+                          (catch (e) empty))
+                   empty))
                (nhp (combat-npc-hp-get name kind))
                (natk (combat-npc-atk-named name kind))
+               ; fierce trait: +1 atk when high
+               (natk (if (and ent
+                              (try (>= (npc-trait-get ent "fierce") 6)
+                                   (catch (e) #f)))
+                         (+ natk 1)
+                       natk))
                (pdmg (if (>= (pet-version pet) 2)
                          (+ *combat-atk* 1)
                        *combat-atk*))
@@ -150,13 +164,24 @@
                       u))
             (begin
               (combat-npc-hp-set! name new-nhp)
+              ; Keep entity record HP in sync for /npc brain + next hits.
+              (if ent
+                  (try
+                    (world-npc-put!
+                      (npc-with-field (npc-normalize ent) "hp" new-nhp))
+                    (catch (e) #f))
+                #t)
               (set! *combat-hp* (if (< new-php 0) 0 new-php))
-              (cons (string-append
-                      "Hit " name " -" (number->string pdmg)
-                      "! Took -" (number->string natk)
-                      " HP" (number->string *combat-hp*)
-                      "/" (number->string *combat-max*))
-                    u))))))))
+              (cons
+                (string-append
+                  (if (and (string? taunt) (> (string-length taunt) 0))
+                      (string-append name ": \"" taunt "\" | ")
+                    empty)
+                  "Hit " name " -" (number->string pdmg)
+                  "! Took -" (number->string natk)
+                  " HP" (number->string *combat-hp*)
+                  "/" (number->string *combat-max*))
+                u))))))))
 
 ; Returns (speech . pet)
 (define (combat-heal-pair! pet)

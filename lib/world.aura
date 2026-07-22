@@ -1114,13 +1114,18 @@
              (x (car (cdr n)))
              (y (car (cdr (cdr n))))
              (kind (car (cdr (cdr (cdr n)))))
-             (speech (car (cdr (cdr (cdr (cdr n))))))
+             ; Prefer living on-talk behavior when entity.aura is loaded.
+             (speech
+               (try
+                 (npc-react-speech (npc-normalize n) "on-talk")
+                 (catch (e) (car (cdr (cdr (cdr (cdr n))))))))
              (dx (if (> px x) (- px x) (- x px)))
              (dy (if (> py y) (- py y) (- y py)))
              (d (+ dx dy)))
         (if (and (string=? kind "friend")
                  (< d best-d)
                  (<= d 6)
+                 (string? speech)
                  (> (string-length speech) 0))
             (loop (cdr xs) speech d)
           (loop (cdr xs) best best-d))))))

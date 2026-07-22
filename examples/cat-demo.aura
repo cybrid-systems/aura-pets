@@ -649,8 +649,15 @@
                  (plog "ERROR" "play-step-exception")
                  (plog-flush!))))))
   (plog-quit *p-quit* *p-frame* (pet-snap *p-pet*))
+  ; Export living genome + NPCs as data AST (session artifact).
+  (try
+    (begin
+      (entity-export-session! "/tmp/aura-pets-session.aura")
+      (plog "export" "/tmp/aura-pets-session.aura"))
+    (catch (e) (plog "export" "failed")))
   (prompt-set-log!
-    (string-append "bye (" *p-quit* ") log=" (plog-path)))
+    (string-append "bye (" *p-quit* ") log=" (plog-path)
+                   " code=/tmp/aura-pets-session.aura"))
   ; Restore terminal before last paint so block cursor / tty cursor come back.
   (tui:show-cursor)
   (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)

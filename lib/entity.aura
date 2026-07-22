@@ -345,13 +345,21 @@
           (loop (cdr xs) best best-d))))))
 
 (define (entity-query-kind kind)
-  (let loop ((xs *world-npcs*) (acc '()))
-    (if (null? xs)
-        (reverse acc)
-      (let ((n (npc-normalize (car xs))))
-        (if (string=? (npc-kind n) kind)
-            (loop (cdr xs) (cons n acc))
-          (loop (cdr xs) acc))))))
+  (let ((k (ent-downcase kind)))
+    (let loop ((xs *world-npcs*) (acc '()))
+      (if (null? xs)
+          (reverse acc)
+        (let* ((n (npc-normalize (car xs)))
+               (nk (ent-downcase (npc-kind n)))
+               (hit
+                 (cond
+                   ((string=? k "enemy")
+                    (not (or (string=? nk "friend") (string=? nk "decor"))))
+                   ((string=? k "all") #t)
+                   (else (string=? nk k)))))
+          (if hit
+              (loop (cdr xs) (cons n acc))
+            (loop (cdr xs) acc)))))))
 
 ; spec: "npc:Name" | "npc#id" | "npc@near" | "npc:kind=friend" | "pet:self"
 (define (entity-query spec)
@@ -456,7 +464,39 @@
              (npc-with-ability npc name on? param)))))
       (else #f))))
 
-; Apply full intent text (multiple lines). Returns toast string.
+; True if line is a patch op (not meta).
+(define (entity-op-line? line)
+  (let ((ln (string-length line)))
+    (or (and (>= ln 4) (string=? (substring line 0 4) "set:"))
+        (and (>= ln 4) (string=? (substring line 0 4) "add:"))
+        (and (>= ln 6) (string=? (substring line 0 6) "trait:"))
+        (and (>= ln 3) (string=? (substring line 0 3) "ai:"))
+        (and (>= ln 10) (string=? (substring line 0 10) "teach_npc:"))
+        (and (>= ln 8) (string=? (substring line 0 8) "ability:")))))
+
+; Apply ALL op lines to one NPC (snapshot once), return updated or #f.
+(define (entity-patch-all-ops! npc op-lines)
+  (set! *ent-did-snap* #f)
+  (let loop ((xs op-lines) (cur (npc-normalize npc)) (n 0))
+    (if (null? xs)
+        (if (> n 0) (world-npc-put! cur) #f)
+      (let ((upd (entity-patch-one! cur (car xs))))
+        (if upd
+            (loop (cdr xs) upd (+ n 1))
+          (loop (cdr xs) cur n))))))
+
+; Apply op list to every NPC; returns (npc-count . last-npc).
+(define (entity-patch-batch-all! npcs op-lines)
+  (let loop ((xs npcs) (n 0) (last #f) (ops-ok 0))
+    (if (null? xs)
+        (cons n last)
+      (let ((saved (entity-patch-all-ops! (car xs) op-lines)))
+        (if saved
+            (loop (cdr xs) (+ n 1) saved ops-ok)
+          (loop (cdr xs) n last ops-ok))))))
+
+; Apply full intent text (multiple lines). Supports batch target:npc:kind=*.
+; Returns toast string.
 (define (intent-run! text)
   (set! *ent-last-toast* "")
   (set! *ent-want-diff* #f)
@@ -464,105 +504,197 @@
   (set! *ent-target* #f)
   (let ((n (string-length text))
         (toast (ent-empty))
-        (patched 0)
-        (batch '()))
-    ; First pass: collect target + ops
+        (target-spec (ent-empty))
+        (ops '())
+        (want-diff #f)
+        (do-commit #f))
+    ; Pass 1: collect say / target / ops / flags
     (let loop ((i 0) (start 0))
-      (define (handle-line line)
+      (define (collect line)
         (let ((ln (string-length line)))
           (cond
             ((= ln 0) #t)
             ((and (>= ln 4) (string=? (substring line 0 4) "say:"))
-             (set! toast (substring line 4 ln))
-             #t)
+             (set! toast (substring line 4 ln)))
             ((and (>= ln 7) (string=? (substring line 0 7) "target:"))
-             (let ((spec (substring line 7 ln)))
-               (let ((q (entity-query spec)))
-                 (cond
-                   ((eq? q 'pet-self)
-                    (set! *ent-target* 'pet-self)
-                    #t)
-                   ((and (pair? q) (string? (car q)))
-                    ; single npc (name is string)
-                    (set! *ent-target* q)
-                    #t)
-                   ((and (pair? q) (pair? (car q)))
-                    ; list of npcs from kind=
-                    (set! batch q)
-                    (set! *ent-target* (car q))
-                    #t)
-                   (else
-                    (set! toast "Who? Walk closer or name them.")
-                    #f)))))
-            ((or (string=? line "snapshot:") (string=? line "snapshot"))
-             (set! *ent-did-snap* #f) ; force snap on next patch
-             #t)
+             (set! target-spec (substring line 7 ln)))
+            ((or (string=? line "snapshot:") (string=? line "snapshot")) #t)
             ((or (string=? line "diff:") (string=? line "diff"))
-             (set! *ent-want-diff* #t)
-             #t)
+             (set! want-diff #t))
             ((or (string=? line "aura:commit") (string=? line "aura:commit:"))
-             (try (edsl-aura-commit!) (catch (e) #f))
-             #t)
-            ((eq? *ent-target* 'pet-self)
-             ; route trait-like ops to genome if available
-             (cond
-               ((and (>= ln 6) (string=? (substring line 0 6) "trait:"))
-                (let ((parts (entity-parse-bar (substring line 6 ln))))
-                  (if (>= (length parts) 2)
-                      (let ((t (car parts))
-                            (d (string->number (car (cdr parts)))))
-                        (if d
-                            (begin
-                              (try (genome-mutate! t d "intent") (catch (e) #f))
-                              (set! patched (+ patched 1))
-                              (set! toast
-                                (try (genome-last-toast) (catch (e) toast)))
-                              #t)
-                          #f))
-                    #f)))
-               (else #t)))
-            ((pair? *ent-target*)
-             (let ((upd (entity-patch-one! *ent-target* line)))
-               (if upd
-                   (begin
-                     (set! *ent-target* (world-npc-put! upd))
-                     (set! patched (+ patched 1))
-                     #t)
-                 #t)))
+             (set! do-commit #t))
+            ((entity-op-line? line)
+             (set! ops (append ops (list line))))
             (else #t))))
       (if (>= i n)
           (begin
-            (if (< start n)
-                (handle-line (substring text start n))
-              #t)
-            (if (and *ent-want-diff* (pair? *ent-target*)
-                     (not (eq? *ent-target* 'pet-self)))
-                (set! toast
-                  (if (= (string-length toast) 0)
-                      (npc-diff-show *ent-target*)
-                    (string-append toast " | " (npc-diff-show *ent-target*))))
-              #t)
-            (if (and (= (string-length toast) 0) (> patched 0)
-                     (pair? *ent-target*) (not (eq? *ent-target* 'pet-self)))
-                (set! toast
-                  (string-append "Patched " (npc-name *ent-target*)
-                                 " (" (number->string patched) " ops)"))
-              #t)
-            (if (= (string-length toast) 0)
-                (set! toast "No changes.")
-              #t)
-            (set! *ent-last-toast* toast)
-            toast)
+            (if (< start n) (collect (substring text start n)) #t)
+            ; Pass 2: resolve target(s) and apply
+            (let* ((q (if (= (string-length target-spec) 0)
+                          #f
+                        (entity-query target-spec)))
+                   (targets
+                     (cond
+                       ((not q) '())
+                       ((eq? q 'pet-self) 'pet-self)
+                       ((and (pair? q) (string? (car q))) (list q))
+                       ((and (pair? q) (pair? (car q))) q)
+                       (else '())))
+                   (patched 0)
+                   (last #f))
+              (cond
+                ((eq? targets 'pet-self)
+                 (let loop2 ((xs ops))
+                   (if (null? xs) #t
+                     (begin
+                       (let ((line (car xs))
+                             (ln (string-length (car xs))))
+                         (if (and (>= ln 6)
+                                  (string=? (substring line 0 6) "trait:"))
+                             (let ((parts (entity-parse-bar
+                                            (substring line 6 ln))))
+                               (if (>= (length parts) 2)
+                                   (let ((t (car parts))
+                                         (d (string->number
+                                              (car (cdr parts)))))
+                                     (if d
+                                         (begin
+                                           (try (genome-mutate! t d "intent")
+                                                (catch (e) #f))
+                                           (set! patched (+ patched 1))
+                                           (set! toast
+                                             (try (genome-last-toast)
+                                                  (catch (e) toast))))
+                                       #t))
+                                 #t))
+                           #t))
+                       (loop2 (cdr xs))))))
+                ((null? targets)
+                 (if (= (string-length toast) 0)
+                     (set! toast "Who? Walk closer or name them.")
+                   #t))
+                (else
+                 (let ((r (entity-patch-batch-all! targets ops)))
+                   (set! patched (car r))
+                   (set! last (cdr r))
+                   (set! *ent-target* last)
+                   (if (and want-diff last)
+                       (set! toast
+                         (if (= (string-length toast) 0)
+                             (string-append
+                               (if (> (length targets) 1)
+                                   (string-append
+                                     "x" (number->string (length targets)) " "
+                                     (npc-name last) "… | ")
+                                 (ent-empty))
+                               (npc-diff-show last))
+                           (string-append toast " | " (npc-diff-show last))))
+                     #t)
+                   (if (and (= (string-length toast) 0) (> patched 0) last)
+                       (set! toast
+                         (string-append
+                           "Patched "
+                           (if (> (length targets) 1)
+                               (string-append
+                                 (number->string (length targets)) " NPCs")
+                             (npc-name last))
+                           " x" (number->string (length ops)) " ops"))
+                     #t))))
+              (if do-commit
+                  (try (edsl-aura-commit!) (catch (e) #f))
+                #t)
+              (if (= (string-length toast) 0)
+                  (set! toast "No changes.")
+                #t)
+              (set! *ent-last-toast* toast)
+              (set! *ent-want-diff* want-diff)
+              toast))
         (if (string=? (substring text i (+ i 1)) "\n")
             (begin
               (if (> i start)
-                  (handle-line (substring text start i))
+                  (collect (substring text start i))
                 #t)
               (loop (+ i 1) (+ i 1)))
           (loop (+ i 1) start))))))
 
-; Slash helper: /npc Bunny set hp 20
-; args after "npc " already: "Bunny set hp 20" or "@near trait fierce +2"
+; on-hit / on-talk speech for combat & talk (falls back to main speech).
+(define (npc-react-speech n event)
+  (let ((n (npc-normalize n))
+        (s (npc-behavior-get n event)))
+    (if (and s (string? s) (> (string-length s) 0))
+        s
+      (npc-speech n))))
+
+; Export living world + genome as readable "code" artifact (session end).
+(define (entity-export-session! path)
+  (let* ((head
+           (string-append
+             ";; aura-pets session export — living data AST (not set-code)\n"
+             ";; theme=" *world-theme* " bg=" *bg-style* "\n"
+             ";; regenerate mental model: load entity.aura + apply records\n\n"))
+         (g (try
+              (string-append
+                "(define *exported-genome*\n  \""
+                (genome-line) "\")\n"
+                "(define *exported-genome-diff*\n  \""
+                (genome-diff-show) "\")\n\n")
+              (catch (e) ";; genome n/a\n")))
+         (body
+           (let loop ((xs *world-npcs*) (acc "(define *exported-npcs* (list\n"))
+             (if (null? xs)
+                 (string-append acc "))\n")
+               (let ((n (npc-normalize (car xs))))
+                 (loop (cdr xs)
+                       (string-append acc
+                         "  ;; " (npc-line n) "\n"
+                         "  (list \"" (npc-name n) "\" "
+                         (number->string (npc-x n)) " "
+                         (number->string (npc-y n)) " \""
+                         (npc-kind n) "\" \"" (npc-speech n) "\" \""
+                         (npc-sprite n) "\" \"" (npc-id n) "\" "
+                         (number->string (npc-hp n)) " "
+                         (number->string (npc-atk n)) " \""
+                         (npc-ai n) "\")\n")))))))
+    (try
+      (begin
+        (write-file path (string-append head g body))
+        (set! *ent-last-toast* (string-append "Exported " path))
+        path)
+      (catch (e) #f))))
+
+; Resolve slash target token → intent target: line.
+(define (entity-slash-target-line tgt)
+  (let ((t (ent-downcase tgt)))
+    (cond
+      ((or (string=? t "@near") (string=? t "near"))
+       "target:npc@near\n")
+      ((or (string=? t "kind=enemy") (string=? t "enemy")
+           (string=? t "enemies") (string=? t "kind=enemies"))
+       "target:npc:kind=enemy\n")
+      ((or (string=? t "kind=friend") (string=? t "friends")
+           (string=? t "kind=friends"))
+       "target:npc:kind=friend\n")
+      ((or (string=? t "kind=all") (string=? t "all"))
+       "target:npc:kind=all\n")
+      ((and (>= (string-length t) 5)
+            (string=? (substring t 0 5) "kind="))
+       (string-append "target:npc:" t "\n"))
+      ((and (>= (string-length tgt) 1)
+            (string=? (substring tgt 0 1) "#"))
+       (string-append "target:npc" tgt "\n"))
+      (else (string-append "target:npc:" tgt "\n")))))
+
+(define (entity-slash-query-token tgt)
+  (let ((t (ent-downcase tgt)))
+    (cond
+      ((or (string=? t "@near") (string=? t "near")) "npc@near")
+      ((or (string=? t "enemy") (string=? t "enemies")
+           (string=? t "kind=enemy")) "npc:kind=enemy")
+      ((or (string=? t "friends") (string=? t "kind=friend")) "npc:kind=friend")
+      ((or (string=? t "all") (string=? t "kind=all")) "npc:kind=all")
+      (else tgt))))
+
+; Slash helper: /npc Bunny set hp 20 | /npc kind=enemy trait fierce +2
 (define (entity-slash-npc! args)
   (let ((n (string-length args)))
     (if (= n 0)
@@ -575,7 +707,6 @@
             (begin
               (set! *ent-last-toast* "No NPC nearby.")
               *ent-last-toast*)))
-      ; split first token = target, rest = command
       (let find ((i 0))
         (if (and (< i n) (not (string=? (substring args i (+ i 1)) " ")))
             (find (+ i 1))
@@ -586,7 +717,8 @@
                                     (string=? (substring args j (+ j 1)) " "))
                                (skip (+ j 1))
                              (substring args j n)))))
-                 (q (entity-query tgt)))
+                 (tline (entity-slash-target-line tgt))
+                 (q (entity-query (entity-slash-query-token tgt))))
             (cond
               ((not q)
                (set! *ent-last-toast* "Who? Try /npc @near or a name.")
@@ -596,25 +728,41 @@
                  (try (genome-brain-show) (catch (e) "pet genome n/a")))
                *ent-last-toast*)
               ((= (string-length rest) 0)
-               (set! *ent-target* q)
-               (set! *ent-last-toast* (npc-brain-show q))
-               *ent-last-toast*)
+               (if (and (pair? q) (pair? (car q)))
+                   (begin
+                     (set! *ent-last-toast*
+                       (string-append
+                         (number->string (length q)) " NPCs. e.g. first: "
+                         (npc-brain-show (car q))))
+                     *ent-last-toast*)
+                 (begin
+                   (set! *ent-target* q)
+                   (set! *ent-last-toast* (npc-brain-show q))
+                   *ent-last-toast*)))
               ((or (string=? rest "diff") (string=? (ent-downcase rest) "diff"))
-               (set! *ent-last-toast* (npc-diff-show q))
-               *ent-last-toast*)
+               (if (and (pair? q) (string? (car q)))
+                   (begin
+                     (set! *ent-last-toast* (npc-diff-show q))
+                     *ent-last-toast*)
+                 (begin
+                   (set! *ent-last-toast*
+                     (string-append
+                       (number->string (length q)) " targets — pick a name"))
+                   *ent-last-toast*)))
               ((or (string=? rest "brain") (string=? (ent-downcase rest) "brain")
                    (string=? rest "show"))
-               (set! *ent-last-toast* (npc-brain-show q))
-               *ent-last-toast*)
+               (if (and (pair? q) (string? (car q)))
+                   (begin
+                     (set! *ent-last-toast* (npc-brain-show q))
+                     *ent-last-toast*)
+                 (begin
+                   (set! *ent-last-toast*
+                     (string-append (number->string (length q)) " NPCs matched"))
+                   *ent-last-toast*)))
               (else
-               ; Build intent text: target + mapped ops
                (let ((ops (entity-slash-rest-to-ops rest)))
                  (intent-run!
-                   (string-append
-                     "target:npc:" (npc-name (if (pair? q) q q)) "\n"
-                     "snapshot:\n"
-                     ops
-                     "diff:\n")))))))))))
+                   (string-append tline "snapshot:\n" ops "diff:\n")))))))))))
 
 ; "set hp 20" | "trait fierce +2" | "ai hunter" | "teach on-hit Hi"
 (define (entity-slash-rest-to-ops rest)
@@ -709,5 +857,28 @@
          "snapshot:\n"
          "ai:guard\n"
          "trait:curious|-2\n"
+         "diff:\n"))
+      ; Batch: all enemies / every foe
+      ((and (or (ent-has? t "enemy") (ent-has? t "enemies") (ent-has? t "foe")
+                (ent-has? t "敌人"))
+            (or (ent-has? t "all") (ent-has? t "every") (ent-has? t "全体")
+                (ent-has? t "fierce") (ent-has? t "mean") (ent-has? t "buff")))
+       (string-append
+         "say:All enemies evolved!\n"
+         "target:npc:kind=enemy\n"
+         "snapshot:\n"
+         "trait:fierce|2\n"
+         "add:atk|1\n"
+         "ai:hunter\n"
+         "diff:\n"))
+      ((and (or (ent-has? t "friend") (ent-has? t "friends") (ent-has? t "盟友"))
+            (or (ent-has? t "all") (ent-has? t "every") (ent-has? t "全体")
+                (ent-has? t "heal") (ent-has? t "buff") (ent-has? t "strong")))
+       (string-append
+         "say:Friends powered up!\n"
+         "target:npc:kind=friend\n"
+         "snapshot:\n"
+         "add:hp|3\n"
+         "trait:clingy|1\n"
          "diff:\n"))
       (else #f))))

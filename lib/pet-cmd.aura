@@ -136,7 +136,7 @@
                (set! *last-act* "guide")
                (cons #t pet))))))
 
-      ; /npc [Name|@near] [set hp 20|trait fierce +2|diff|brain]
+      ; /npc [Name|@near|kind=enemy] [set hp 20|trait fierce +2|diff|brain]
       ((or (string=? head "npc") (string=? head "entity")
            (string=? head "mob") (string=? head "unit"))
        (try (ent-set-near! *cmd-px* *cmd-py*) (catch (e) #f))
@@ -146,6 +146,22 @@
          (set! *speech* toast)
          (set! *last-act* "npc-mutate")
          (anim-start! "evolve" 8)
+         (cons #t pet)))
+
+      ; /export — dump living genome + NPCs as .aura data AST
+      ((or (string=? head "export") (string=? head "save-brain")
+           (string=? head "dump"))
+       (let ((path
+               (if (= (string-length args) 0)
+                   "/tmp/aura-pets-session.aura"
+                 args)))
+         (set! *speech*
+           (try
+             (begin
+               (entity-export-session! path)
+               (string-append "Saved living code -> " path))
+             (catch (e) "Export failed")))
+         (set! *last-act* "export")
          (cons #t pet)))
 
       ; ── care ──
@@ -352,4 +368,6 @@
         (string=? head "diff") (string=? head "mutate") (string=? head "guide")
         (string=? head "genome") (string=? head "code") (string=? head "evo")
         (string=? head "rewrite") (string=? head "temper")
-        (string=? head "npc") (string=? head "entity") (string=? head "mob"))))
+        (string=? head "npc") (string=? head "entity") (string=? head "mob")
+        (string=? head "export") (string=? head "save-brain")
+        (string=? head "dump"))))
