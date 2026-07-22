@@ -36,8 +36,9 @@ On exit, `run.sh` prints the last 25 lines. Look for:
 | Tag | Meaning |
 |-----|---------|
 | `QUIT reason=...` | Why the loop stopped |
-| `evt act=quit tag=quit` | Ctrl-C / tui quit event |
-| `evt act=quit pay=q` | User pressed **q** |
+| `evt act=quit tag=quit` | Ctrl+C (needs 2× to exit; first arms) |
+| `stop double-ctrl-c` | Second Ctrl+C within window |
+| `evt act=quit` + key pay | Ctrl+D on empty prompt |
 | `hot cmd=... keep=0` | care command returned stop |
 | `ERROR` | exception in play-step |
 

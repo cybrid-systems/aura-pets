@@ -122,17 +122,29 @@
 (define *live-running?* #t)
 (define *live-evolve-count* 0)
 
-; Handle one tui:read-event result. Quits ONLY on the engine's
-; ("quit" . _) tag (which tui:read-event emits on Ctrl+D EOF). Empty-line
-; "e"/"E"/space/Space fires ccs-evolve! as a hotkey — bypasses prompt-handle
-; so these don't get inserted into the input buf. "r"/"R" on empty line is
-; handled the same way (reset to v0). All other keys route through
-; prompt-handle so the user gets a real blinking-block input area.
+; Quit: Ctrl+D on empty prompt (prompt-handle → "quit"), or double Ctrl+C
+; (engine ("quit" . _) twice within ~2s). Empty-line e/E/space evolve;
+; r/R reset. Other keys go through prompt-handle (blinking block input).
+(define *live-ctrl-c-arm* -999)
+(define *live-frame* 0)
+
+(define (live-arm-ctrl-c!)
+  (set! *live-ctrl-c-arm* *live-frame*)
+  (prompt-set-log! "Ctrl+C again to quit (or Ctrl+D)")
+  #t)
+
+(define (live-ctrl-c-armed?)
+  (and (>= *live-ctrl-c-arm* 0)
+       (< (- *live-frame* *live-ctrl-c-arm*) 50)))
+
 (define (live-dispatch e)
   (cond
     ((not (pair? e)) #t)
+    ; Engine Ctrl+C → double-tap to quit
     ((string=? (car e) "quit")
-     (set! *live-running?* #f) #t)
+     (if (live-ctrl-c-armed?)
+         (begin (set! *live-running?* #f) #t)
+       (live-arm-ctrl-c!)))
     ((and (string=? (car e) "key")
           (= (string-length (prompt-buf)) 0)
           (let ((ch (cdr e)))
@@ -153,15 +165,18 @@
     (else
      (let ((r (prompt-handle e)))
        (cond
-         ((string=? r "submit")
+         ((and (string? r) (string=? r "quit"))
+          ; Ctrl+D on empty line
+          (set! *live-running?* #f) #t)
+         ((and (string? r) (string=? r "submit"))
           (live-on-submit! (prompt-take-submit!))
           #t)
-         ((string=? r "hot")
+         ((and (string? r) (string=? r "hot"))
           (let ((cmd (prompt-hot)))
             (if (string=? cmd "fire")
                 (begin
                   (ccs-evolve!)
-                  (set! *live-evolve-count* (+ *live-evolve-count* 1))))))
+                  (set! *live-evolve-count* (+ *live-evolve-count* 1)))))
           #t)
          (else #t))))))
 
@@ -177,7 +192,7 @@
      (set! *live-evolve-count* 0))
     ((or (string=? s "h") (string=? s "help") (string=? s "?"))
      (prompt-set-log!
-       "e evolve · r reset · h help · C-d quit"))
+       "e evolve · r reset · h help · C-d quit · 2x C-c quit"))
     ((= (string-length s) 0) #t)
     (else
       (prompt-set-log!
@@ -194,13 +209,15 @@
   (tui:hide-cursor)
   (vr-init! W H *live-cam-x* *live-cam-y*)
   ; Wire the prompt: bottom 3 rows, full width, cyber bg fill so the box
-  ; blends with the scene, cyan border, blinking block cursor, Ctrl+D only.
+  ; blends with the scene, cyan border, blinking block cursor.
+  ; Quit: Ctrl+D (empty) or double Ctrl+C.
   (prompt-init! (- H 3))
   (prompt-set-width! W)
   (prompt-set-fill-color! (vr-rgb 12 16 32))    ; match cyber canvas bg
   (prompt-set-border-color! 56797)              ; soft cyan
   (prompt-set-blink! #t)
   (prompt-set-no-q-quit! #t)
+  (set! *live-ctrl-c-arm* -999)
   (let loop ((frame 0))
     (if (not *live-running?*)
         (begin
@@ -212,17 +229,21 @@
           (display " times\n")
           "BYE")
       (begin
+        (set! *live-frame* frame)
         (vr-init! W H *live-cam-x* *live-cam-y*)
         ; Toggle blink cursor: even frames visible block, odd frames hidden.
         ; At ~30 fps this reads as ≈2 Hz blink on most terminals.
         (prompt-set-blink! (= (modulo frame 2) 0))
         ; HUD lives in the prompt's top status line so the scene area is
         ; uncluttered (frame #, cat version, evolve count, controls).
-        (prompt-set-log! (string-append
-          "frame=" (number->string frame)
-          " ver=v" (number->string *ccs-cat-version*)
-          " evolved=" (number->string *live-evolve-count*)
-          " | e evolve · r reset · h help · C-d quit"))
+        ; Skip overwrite while double-C-c arm message is showing.
+        (if (live-ctrl-c-armed?)
+            #t
+          (prompt-set-log! (string-append
+            "frame=" (number->string frame)
+            " ver=v" (number->string *ccs-cat-version*)
+            " evolved=" (number->string *live-evolve-count*)
+            " | e evolve · C-d quit · 2x C-c quit")))
         ; Render: clear → scene → prompt → present (single TUI pass).
         (tui:clear (vr-rgb 12 16 32) (vr-rgb 12 16 32))
         (vr-render! (ccs-scene frame))

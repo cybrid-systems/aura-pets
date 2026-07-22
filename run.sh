@@ -60,7 +60,7 @@ Aura Pets
   ./run.sh smoke
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
-Play: arrows move | 1 2 3 care | q bye
+Play: arrows move | 1 2 3 care | Ctrl+D quit | 2× Ctrl+C quit
   Slash commands (type /… then Enter):
     /eat /play /sleep     care
     /grow /back           morph forms (Kitten→…→Dragon)

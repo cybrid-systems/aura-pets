@@ -390,6 +390,10 @@
 ; Double-tap dash: last nav dir + frame
 (define *dash-dir* "")
 (define *dash-frame* -99)
+; Double Ctrl+C: engine emits ("quit" . _) on each C-c. First arms; second
+; within ~2s (50 frames @ ~25fps) exits. Ctrl+D (empty prompt) quits once.
+(define *ctrl-c-arm-frame* -999)
+(define *ctrl-c-window* 50)
 
 (define (evt-tag e)
   (if (and (pair? e) (string? (car e))) (car e) "none"))
@@ -412,6 +416,21 @@
   (plog "stop" reason)
   #t)
 
+(define (ctrl-c-armed?)
+  (and (>= *ctrl-c-arm-frame* 0)
+       (< (- *p-frame* *ctrl-c-arm-frame*) *ctrl-c-window*)))
+
+(define (arm-ctrl-c!)
+  (set! *ctrl-c-arm-frame* *p-frame*)
+  (game-set-speech! "Ctrl+C again to quit (or Ctrl+D)")
+  (prompt-set-log! (game-speech))
+  (plog "ctrl-c" "armed")
+  #t)
+
+(define (clear-ctrl-c-arm!)
+  (set! *ctrl-c-arm-frame* -999)
+  #t)
+
 ; Process one input event. Returns #t always (state via set!).
 (define (play-handle-event! e)
   (let ((act (prompt-handle e)))
@@ -423,12 +442,22 @@
       #t)
     (cond
       ((and (string? act) (string=? act "quit"))
-       (play-stop!
-         (if (and (pair? e) (string=? (car e) "quit"))
-             "tui-quit-event"
-           (string-append "key-q pay=" (evt-pay e))))
-       (apply-cmd-world *p-pet* "q")
-       #t)
+       ; Engine ("quit" . _) = Ctrl+C → need double press.
+       ; Key path (Ctrl+D empty) → quit immediately.
+       (if (and (pair? e) (string=? (car e) "quit"))
+           (if (ctrl-c-armed?)
+               (begin
+                 (clear-ctrl-c-arm!)
+                 (play-stop! "double-ctrl-c")
+                 (apply-cmd-world *p-pet* "q")
+                 #t)
+             (arm-ctrl-c!))
+         (begin
+           (clear-ctrl-c-arm!)
+           (play-stop!
+             (string-append "key-quit pay=" (evt-pay e)))
+           (apply-cmd-world *p-pet* "q")
+           #t)))
       ((and (string? act) (string=? act "nav-left"))
        (nav-apply! "left" -1 0))
       ((and (string? act) (string=? act "nav-right"))
@@ -524,6 +553,8 @@
   (tui:hide-cursor)
   (prompt-init! PROMPT-Y)
   (prompt-set-width! W)
+  ; Quit: Ctrl+D (empty line) or double Ctrl+C — not bare "q".
+  (prompt-set-no-q-quit! #t)
   (game-reset!)
   (morph-reset!)
   (set! *p-pet* (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
@@ -531,6 +562,7 @@
   (battle-reset!)
   (set! *dash-dir* "")
   (set! *dash-frame* -99)
+  (set! *ctrl-c-arm-frame* -999)
   (set! *p-frame* 0)
   (set! *p-x* (clamp-x (quotient W 4)))
   (set! *p-y* (clamp-y (quotient (+ SCENE-Y0 (- SCENE-Y1 CAT-H)) 2)))
@@ -553,7 +585,7 @@
   (game-set-speech!
     (string-append "Welcome! " (world-theme)
                    " " (number->string W) "x" (number->string H)
-                   " | /world regen | Space fire"))
+                   " | C-d quit | 2x C-c quit | Space fire"))
   (prompt-set-log! (game-speech))
   (plog "ready" "entering-play-loop")
   (plog-flush!)

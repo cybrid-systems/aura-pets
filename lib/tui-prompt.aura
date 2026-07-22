@@ -7,14 +7,16 @@
 ;   - Emacs-style line editing
 ;   - left/right arrows, Home/End when terminal sends them
 ;
-; Emacs map (empty-line: only 1/2/3 care + q quit — letters type normally):
+; Emacs map (empty-line: 1/2/3 care + Space fire — letters type normally):
 ;   C-a beginning   C-e end
 ;   C-b left        C-f right
-;   C-d delete-fwd  C-h / DEL / BS backspace
+;   C-d empty → quit (EOF); non-empty → delete-fwd
+;   C-h / DEL / BS backspace
 ;   C-k kill-to-end C-u kill-line
 ;   C-w kill-word-back
 ;   Enter submit
-; evolve/world/talk: type e / world / talk then Enter (not empty-line hotkeys).
+; Quit (play): Ctrl+D (empty line) or double Ctrl+C (engine "quit" tag).
+;   Single empty-line "q" is off when *prompt-no-q-quit?* is #t.
 ; UTF-8: Chinese and other multi-byte keys accepted; cursor is codepoint-aware.
 ;
 ; API:
@@ -48,9 +50,8 @@
 ; Blinking block cursor on/off (default #t — cat-demo keeps its static
 ; inverse cursor; cyber-live toggles per frame for a 2-phase blink).
 (define *prompt-blink-on* #t)
-; When #t, the empty-line "q"/"Q" hotkey no longer returns "quit" from
-; prompt-handle. cat-demo leaves this #f (q still quits); cyber-live sets
-; it #t so the ONLY quit path is Ctrl+D (engine emits ("quit" . _) on EOF).
+; When #t, empty-line "q"/"Q" is not quit (type "q" normally). Play and
+; cyber-live set #t — quit is Ctrl+D (empty) or double Ctrl+C (app-level).
 (define *prompt-no-q-quit?* #f)
 
 (define (prompt-set-width! n)
@@ -85,7 +86,7 @@
   (set! *prompt-submit* (prompt-empty))
   (set! *prompt-hot* (prompt-empty))
   (set! *prompt-cursor* 0)
-  (set! *prompt-log* "Space fire · 2x arrow dash · /weapon /grow /help")
+  (set! *prompt-log* "C-d quit · 2x C-c quit · Space fire · /help")
   #t)
 
 (define (prompt-set-log! msg)
@@ -338,9 +339,13 @@
               (= (char->integer (car (cdr xs))) b1)
               (= (char->integer (car (cdr (cdr xs)))) b2)))))
 
-; Forward delete: C-d or CSI 3~ → U+2326 (E2 8C A6)
+; Ctrl+D (ASCII 4). Empty buffer → quit (EOF); non-empty → del-fwd.
+(define (prompt-is-ctrl-d? ch)
+  (= (prompt-ch-code ch) 4))
+
+; Forward delete: C-d (when not EOF) or CSI 3~ → U+2326 (E2 8C A6)
 (define (prompt-is-del-fwd? ch)
-  (or (= (prompt-ch-code ch) 4)
+  (or (prompt-is-ctrl-d? ch)
       (string=? ch "Delete")
       (prompt-u8-3? ch 226 140 166)))
 
@@ -418,6 +423,9 @@
             ((prompt-is-bs? ch)
              (prompt-backspace!)
              "edit")
+            ; Empty line: Ctrl+D = quit (EOF). Non-empty: del-fwd below.
+            ((and empty? (prompt-is-ctrl-d? ch))
+             "quit")
             ((prompt-is-del-fwd? ch)
              (prompt-delete-fwd!)
              "edit")

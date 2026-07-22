@@ -18,7 +18,8 @@ cd /path/to/aura-pets
 | **1** | Eat + eat anim |
 | **2** | Play + hop anim |
 | **3** | Sleep + Zzz anim |
-| **q** (empty line) | Bye |
+| **Ctrl+D** (empty line) | Bye |
+| **Ctrl+C** twice | Bye (second press within ~2s) |
 | `/eat` `/play` `/sleep` | Care (also `1`/`2`/`3`) |
 | `/grow` | Next form: Kitten→Pink→Tiger→Shadow→Dragon |
 | `/back` | Previous form |
