@@ -45,6 +45,13 @@
 (define *prompt-border* 56797)     ; soft cyan
 (define *prompt-border-dim* 33808) ; dimmer cyan
 (define *prompt-fill* 791072)      ; dark slate fill 0x0C1220
+; Blinking block cursor on/off (default #t — cat-demo keeps its static
+; inverse cursor; cyber-live toggles per frame for a 2-phase blink).
+(define *prompt-blink-on* #t)
+; When #t, the empty-line "q"/"Q" hotkey no longer returns "quit" from
+; prompt-handle. cat-demo leaves this #f (q still quits); cyber-live sets
+; it #t so the ONLY quit path is Ctrl+D (engine emits ("quit" . _) on EOF).
+(define *prompt-no-q-quit?* #f)
 
 (define (prompt-set-width! n)
   (set! *prompt-width* n)
@@ -58,6 +65,14 @@
 
 (define (prompt-set-fill-color! c)
   (set! *prompt-fill* c)
+  #t)
+
+(define (prompt-set-blink! b)
+  (set! *prompt-blink-on* (if b #t #f))
+  #t)
+
+(define (prompt-set-no-q-quit! b)
+  (set! *prompt-no-q-quit?* (if b #t #f))
   #t)
 
 ; Fresh empty — avoid "" literals (require can clobber empty string heap slots).
@@ -432,7 +447,7 @@
             ((prompt-is-kill-word? ch)
              (prompt-kill-word-back!)
              "edit")
-            ((and empty? (or (string=? ch "q") (string=? ch "Q")))
+            ((and (not *prompt-no-q-quit?*) empty? (or (string=? ch "q") (string=? ch "Q")))
              "quit")
             ((and empty? (prompt-is-hot? ch))
              (set! *prompt-hot* (prompt-hot-cmd ch))
@@ -541,7 +556,11 @@
       (prompt-put-str! in-x y1 left-show in-fg bbg 0)
       (if (< cur-x x1)
           (begin
-            (tui:cell cur-x y1 cur-ch cursor-fg cursor-bg 1)
+            (if *prompt-blink-on*
+                ; visible: inverse block (black char on cursor-bg)
+                (tui:cell cur-x y1 cur-ch cursor-fg cursor-bg 1)
+                ; hidden: empty cell matching prompt-fill bg (no block)
+                (tui:cell cur-x y1 " " cursor-fg *prompt-fill* 0))
             (if (< (+ cur-x 1) x1)
                 (prompt-put-str! (+ cur-x 1) y1
                                  (prompt-clip-cols rest (- x1 (+ cur-x 1)))

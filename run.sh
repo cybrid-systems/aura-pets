@@ -52,6 +52,7 @@ Aura Pets
   ./run.sh --demo [N]      headless frames
   ./run.sh --cyber [N]     3D cyber cat stage (headless frames)
   ./run.sh --cyber-orbit [N] 3D cyber cat stage orbit showcase (headless frames)
+  ./run.sh --cyber-live     3D cyber cat stage (interactive, Grok prompt)
   ./run.sh smoke
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
@@ -129,9 +130,12 @@ case "$MODE" in
     EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-orbit $FRAMES))"
     ;;
   cyber-live)
-    # Interactive cyber cat stage — real event loop with /evolve + q.
+    # Interactive cyber cat stage — real event loop with the Grok Build–
+    # style prompt (blinking block cursor, Ctrl+D-only quit). tui-prompt
+    # is loaded here so --cyber-live gets a real input area; the static
+    # "Keys: …" text from the previous headless-style render is gone.
     EXAMPLE="examples/cyber-cat-stage.aura"
-    LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\")"
+    LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
     EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-live))"
     ;;
 esac

@@ -122,66 +122,118 @@
 (define *live-running?* #t)
 (define *live-evolve-count* 0)
 
-; Handle one tui:read-event result. Tag "quit" or key "q"/"Q" stops the
-; loop. Key "e" or " " triggers ccs-evolve!. Key "r" resets to v0.
-(define (live-on-event e)
+; Handle one tui:read-event result. Quits ONLY on the engine's
+; ("quit" . _) tag (which tui:read-event emits on Ctrl+D EOF). Empty-line
+; "e"/"E"/space/Space fires ccs-evolve! as a hotkey — bypasses prompt-handle
+; so these don't get inserted into the input buf. "r"/"R" on empty line is
+; handled the same way (reset to v0). All other keys route through
+; prompt-handle so the user gets a real blinking-block input area.
+(define (live-dispatch e)
   (cond
     ((not (pair? e)) #t)
-    ((string=? (car e) "quit") (set! *live-running?* #f))
-    ((string=? (car e) "key")
-     (let ((ch (cdr e)))
+    ((string=? (car e) "quit")
+     (set! *live-running?* #f) #t)
+    ((and (string=? (car e) "key")
+          (= (string-length (prompt-buf)) 0)
+          (let ((ch (cdr e)))
+            (or (string=? ch "e") (string=? ch "E")
+                (string=? ch " ") (string=? ch "Space"))))
+     ; Empty-line hotkey → evolve (not a typing input).
+     (ccs-evolve!)
+     (set! *live-evolve-count* (+ *live-evolve-count* 1))
+     #t)
+    ((and (string=? (car e) "key")
+          (= (string-length (prompt-buf)) 0)
+          (let ((ch (cdr e)))
+            (or (string=? ch "r") (string=? ch "R"))))
+     ; Empty-line hotkey → reset v0.
+     (set! *ccs-cat-version* 0)
+     (set! *live-evolve-count* 0)
+     #t)
+    (else
+     (let ((r (prompt-handle e)))
        (cond
-         ((or (string=? ch "q") (string=? ch "Q"))
-          (set! *live-running?* #f))
-         ((or (string=? ch "e") (string=? ch " "))
-          (ccs-evolve!)
-          (set! *live-evolve-count* (+ *live-evolve-count* 1)))
-         ((or (string=? ch "r") (string=? ch "R"))
-          (set! *ccs-cat-version* 0)
-          (set! *live-evolve-count* 0))
-         (else #t))))
-    (else #t)))
+         ((string=? r "submit")
+          (live-on-submit! (prompt-take-submit!))
+          #t)
+         ((string=? r "hot")
+          (let ((cmd (prompt-hot)))
+            (if (string=? cmd "fire")
+                (begin
+                  (ccs-evolve!)
+                  (set! *live-evolve-count* (+ *live-evolve-count* 1))))))
+          #t)
+         (else #t))))))
+
+; Interpret the submitted prompt text as a command. Bare letters / words;
+; no slash prefix (cyber-live is single-line, not a slash REPL).
+(define (live-on-submit! s)
+  (cond
+    ((or (string=? s "e") (string=? s "evolve"))
+     (ccs-evolve!)
+     (set! *live-evolve-count* (+ *live-evolve-count* 1)))
+    ((or (string=? s "r") (string=? s "reset"))
+     (set! *ccs-cat-version* 0)
+     (set! *live-evolve-count* 0))
+    ((or (string=? s "h") (string=? s "help") (string=? s "?"))
+     (prompt-set-log!
+       "e evolve · r reset · h help · C-d quit"))
+    ((= (string-length s) 0) #t)
+    (else
+      (prompt-set-log!
+        (string-append "unknown cmd: " s "  (h for help)")))))
 
 ; Interactive cyber-cat stage — runs until *live-running?* becomes #f.
-; Drains pending input (non-blocking), then briefly blocks (8ms) so
-; keystrokes are responsive without busy-spinning.
+; Bottom 3 rows of the canvas are reserved for the prompt (Grok Build–style
+; box with blinking block cursor). tui-prompt.aura is loaded by run.sh's
+; LOAD_STAGE for --cyber-live; this file expects (prompt-init! …) /
+; prompt-draw! / prompt-handle to be bound.
 (define (cyber-cat-stage-live)
   (tui:init "aura-pets Cyber Cat Stage (live)" W H #t)
   (tui:raw-mode-on)
   (tui:hide-cursor)
   (vr-init! W H *live-cam-x* *live-cam-y*)
+  ; Wire the prompt: bottom 3 rows, full width, cyber bg fill so the box
+  ; blends with the scene, cyan border, blinking block cursor, Ctrl+D only.
+  (prompt-init! (- H 3))
+  (prompt-set-width! W)
+  (prompt-set-fill-color! (vr-rgb 12 16 32))    ; match cyber canvas bg
+  (prompt-set-border-color! 56797)              ; soft cyan
+  (prompt-set-blink! #t)
+  (prompt-set-no-q-quit! #t)
   (let loop ((frame 0))
     (if (not *live-running?*)
         (begin
           (tui:show-cursor)
           (tui:raw-mode-off)
           (tui:shutdown)
-          (display "\nDONE — evolved " (number->string *live-evolve-count*) " times\n")
+          (display "\nDONE — evolved ")
+          (display (number->string *live-evolve-count*))
+          (display " times\n")
           "BYE")
       (begin
         (vr-init! W H *live-cam-x* *live-cam-y*)
-        (vr-ascii-clear!)
-        (vr-frame! 12 16 32 (ccs-scene frame))
-        (display "\n=== Live Frame ")
-        (display (number->string frame))
-        (display " ver=v")
-        (display (number->string *ccs-cat-version*))
-        (display " cam=(")
-        (display (number-to-string *live-cam-x*))
-        (display ",")
-        (display (number->string *live-cam-y*))
-        (display ") evolved=")
-        (display (number->string *live-evolve-count*))
-        (display " ===\n")
-        (display "Keys: e/space=evolve, r=reset v0, q=quit\n")
-        (display (vr-ascii-dump!))
-        (newline)
+        ; Toggle blink cursor: even frames visible block, odd frames hidden.
+        ; At ~30 fps this reads as ≈2 Hz blink on most terminals.
+        (prompt-set-blink! (= (modulo frame 2) 0))
+        ; HUD lives in the prompt's top status line so the scene area is
+        ; uncluttered (frame #, cat version, evolve count, controls).
+        (prompt-set-log! (string-append
+          "frame=" (number->string frame)
+          " ver=v" (number->string *ccs-cat-version*)
+          " evolved=" (number->string *live-evolve-count*)
+          " | e evolve · r reset · h help · C-d quit"))
+        ; Render: clear → scene → prompt → present (single TUI pass).
+        (tui:clear (vr-rgb 12 16 32) (vr-rgb 12 16 32))
+        (vr-render! (ccs-scene frame))
+        (prompt-draw! 11189196 16120575 0 0 16777215)
+        (tui:present)
+        ; Drain pending events (non-blocking).
         (let drain ((n 0))
-          (if (>= n 12) #t
+          (if (>= n 16) #t
             (let ((e (tui:read-event 0)))
-              (if e
-                  (begin (live-on-event e) (drain (+ n 1)))
-                #t))))
+              (if e (begin (live-dispatch e) (drain (+ n 1))) #t))))
+        ; 8ms blocking wait so keystrokes stay responsive w/o busy-spin.
         (let ((e (tui:read-event 8)))
-          (if e (live-on-event e) #t))
+          (if e (live-dispatch e) #t))
         (loop (+ frame 1))))))
