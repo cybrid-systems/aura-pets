@@ -38,9 +38,22 @@ cd /path/to/aura-pets
 | `/npc Bunny set hp 20` | Mutate field (also `trait fierce +2`, `ai hunter`) |
 | `/npc @near …` | Patch nearest NPC |
 | `/npc kind=enemy trait fierce +2` | **Batch** patch all enemies |
-| `/export` | Dump genome+NPCs → `/tmp/aura-pets-session.aura` |
+| `/save` | Save life → `~/.aura-pets/saves/latest.aura` (quit also auto-saves) |
+| `/load` | Restore mind + NPCs (data AST; no `set-code`) |
+| `/new` | New life (soft reset genome / edsl / love) |
+| `/export` | Share/debug export under `~/.aura-pets/exports/` |
 | free text | Guide / batch intent (`all enemies fiercer`) or **LLM director** |
 | `/fight` near NPC | Shows **on-hit taunt** if set (`ability:taunt`) |
+
+### Save / continue
+
+| Action | Path |
+|--------|------|
+| Progress (machine) | `~/.aura-pets/saves/latest.aura` (`save-format:1`) |
+| Share export | `~/.aura-pets/exports/session.aura` |
+| Debug copy | `/tmp/aura-pets-session.aura` |
+
+Default `./run.sh play` starts **new**; use `--continue` or in-game `/load` to resume.
 
 ### Pure Aura LLM / worldgen (no Python required)
 
