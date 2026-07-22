@@ -39,7 +39,7 @@
     ((= i 0)
      "Guide: 1 basics  2 care  3 code  4 fight  5 world  6 save  | /n next · /b prev · /tut care")
     ((= i 1)
-     "Basics: arrows move · empty-line 1/2/3 care · Tab completes /cmds · C-d quit · 2x C-c quit")
+     "Basics: hjkl/arrows move (NORMAL) · i type · 1/2/3 care · Esc play · C-d quit")
     ((= i 2)
      "Care: 1 eat · 2 play · 3 sleep · love grows · /grow morph · teach feed Hi  (try it!)")
     ((= i 3)

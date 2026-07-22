@@ -71,8 +71,8 @@ Default `./run.sh play` **resumes** `~/.aura-pets/saves/latest.aura` when presen
 
 | Mode | Feel |
 |------|------|
-| **NORMAL** (default) | Prompt **hidden** — arrows move; **1 2 3** care; **Space** fire |
-| **INSERT** | Prompt **box** — pure typing; arrows = cursor/history only |
+| **NORMAL** (default) | Prompt **hidden** — **hjkl**/arrows move; **1 2 3** care; **Space** fire |
+| **INSERT** | Prompt **box** — pure typing; arrows = cursor/history only (hjkl type as letters) |
 
 | Key | Action |
 |-----|--------|
@@ -84,6 +84,7 @@ Default `./run.sh play` **resumes** `~/.aura-pets/saves/latest.aura` when presen
 | **← / →** (INSERT) | Move caret (never move pet) |
 | **↑ / ↓** (INSERT) | Command history |
 | **C-p / C-n** | History (INSERT) |
+| **h j k l** (NORMAL) | Move pet (vi: left/down/up/right) |
 | **←↑↓→** (NORMAL) | Move pet |
 | **1 2 3 / Space** (NORMAL only) | Care / fire |
 | Status line | Live completion hints (`Tab → /brain`) |

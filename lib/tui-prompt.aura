@@ -12,8 +12,8 @@
 ;   - UTF-8 codepoint-aware cursor
 ;
 ; Modes:
-;   NORMAL — full game; arrows + 1/2/3 care + Space fire; no input box
-;   INSERT — Grok-style box; pure typing (1/2/3/Space are characters);
+;   NORMAL — full game; arrows/hjkl move + 1/2/3 care + Space fire; no box
+;   INSERT — Grok-style box; pure typing (1/2/3/Space/hjkl are characters);
 ;            Esc back to NORMAL
 ;
 ; Emacs map (INSERT):
@@ -97,7 +97,7 @@
   (set! *prompt-hint* (prompt-empty))
   (set! *prompt-tab-i* 0)
   ; Keep *prompt-buf* so i returns to the same draft.
-  (set! *prompt-log* "NORMAL · i type · : slash · arrows move · 1/2/3 care")
+  (set! *prompt-log* "NORMAL · hjkl/arrows move · i type · : slash · 1/2/3 care")
   #t)
 
 (define (prompt-enter-insert!)
@@ -713,6 +713,7 @@
     (else ch)))
 
 ; NORMAL mode: game keys only; i/a/: open INSERT.
+; vi-style move: h left · j down · k up · l right (plus arrows).
 (define (prompt-handle-normal ch)
   (cond
     ((prompt-is-esc? ch) #f)
@@ -723,11 +724,15 @@
     ((string=? ch ":")
      (prompt-enter-insert-cmd!)
      "mode")
-    ; Fullscreen game nav — always
-    ((prompt-is-left? ch) "nav-left")
-    ((prompt-is-right? ch) "nav-right")
-    ((prompt-is-up? ch) "nav-up")
-    ((prompt-is-down? ch) "nav-down")
+    ; Fullscreen game nav — arrows + hjkl
+    ((or (prompt-is-left? ch) (string=? ch "h") (string=? ch "H"))
+     "nav-left")
+    ((or (prompt-is-right? ch) (string=? ch "l") (string=? ch "L"))
+     "nav-right")
+    ((or (prompt-is-up? ch) (string=? ch "k") (string=? ch "K"))
+     "nav-up")
+    ((or (prompt-is-down? ch) (string=? ch "j") (string=? ch "J"))
+     "nav-down")
     ; 1/2/3 care + Space fire — NORMAL only
     ((prompt-is-hot? ch)
      (set! *prompt-hot* (prompt-hot-cmd ch))
