@@ -248,6 +248,21 @@
            (game-set-speech! "Guide: lazy fierce clingy curious quiet chatty")
            (prompt-set-log! (game-speech))
            (cons #t pet)))))
+    ; Offline NPC intent (query→mutate) before LLM
+    ((try (entity-offline-intent cmd) (catch (e) #f))
+     (try (ent-set-near! *p-x* *p-y*) (catch (e) #f))
+     (let ((ops (try (entity-offline-intent cmd) (catch (e) #f))))
+       (if ops
+           (let ((toast (try (intent-run! ops) (catch (e) #f))))
+             (if toast
+                 (begin
+                   (game-set-speech! toast)
+                   (prompt-set-log! toast)
+                   (anim-start! "evolve" 8)
+                   (plog "entity" "offline-intent")
+                   (cons #t pet))
+               (cons #t pet)))
+         (cons #t pet))))
     ; Free language → async LLM director (non-blocking)
     ((nl-should-handle? cmd)
      (if (nl-busy?)

@@ -60,13 +60,24 @@
 (define (combat-npc-atk kind)
   (if (string=? kind "friend") 2 1))
 
+; Prefer entity atk when we have a live NPC record (name lookup).
+(define (combat-npc-atk-named name kind)
+  (let ((ent (try (entity-query-by-name name) (catch (e) #f))))
+    (if ent
+        (try (npc-atk ent) (catch (e) (combat-npc-atk kind)))
+      (combat-npc-atk kind))))
+
 (define (combat-npc-hp-get name kind)
-  (let loop ((xs *npc-hp*))
-    (if (null? xs)
-        (combat-npc-max kind)
-      (if (string=? (car (car xs)) name)
-          (cdr (car xs))
-        (loop (cdr xs))))))
+  ; Prefer living entity record hp (entity.aura) when present.
+  (let ((ent (try (entity-query-by-name name) (catch (e) #f))))
+    (if ent
+        (try (npc-hp ent) (catch (e) (combat-npc-max kind)))
+      (let loop ((xs *npc-hp*))
+        (if (null? xs)
+            (combat-npc-max kind)
+          (if (string=? (car (car xs)) name)
+              (cdr (car xs))
+            (loop (cdr xs))))))))
 
 (define (combat-npc-hp-set! name hp)
   (let loop ((xs *npc-hp*) (acc '()))
@@ -121,7 +132,7 @@
         (let* ((name (car npc))
                (kind (car (cdr (cdr (cdr npc)))))
                (nhp (combat-npc-hp-get name kind))
-               (natk (combat-npc-atk kind))
+               (natk (combat-npc-atk-named name kind))
                (pdmg (if (>= (pet-version pet) 2)
                          (+ *combat-atk* 1)
                        *combat-atk*))

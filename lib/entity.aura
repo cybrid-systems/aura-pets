@@ -1,0 +1,713 @@
+; lib/entity.aura — query → patch → diff for living world entities (Slice query/mutate).
+;
+; NPC full record (play-safe data AST, no mid-session set-code):
+;   0 name  1 x  2 y  3 kind  4 speech  5 sprite
+;   6 id  7 hp  8 atk  9 ai
+;   10 traits     ; ((name val) ...)
+;   11 behaviors  ; ((event speech) ...)
+;   12 prev-line  ; snapshot string for /diff
+;
+; Load after world.aura (+ optional genome for pet:self).
+; Short legacy NPCs (5–6 fields) are normalized on touch.
+
+(define *ent-near-x* 0)
+(define *ent-near-y* 0)
+(define *ent-target* #f)       ; last resolved NPC record (live list)
+(define *ent-last-toast* "")
+(define *ent-want-diff* #f)
+(define *ent-did-snap* #f)
+
+(define (ent-empty) (substring "x" 0 0))
+
+(define (ent-clamp n lo hi)
+  (if (< n lo) lo (if (> n hi) hi n)))
+
+(define (ent-set-near! x y)
+  (set! *ent-near-x* x)
+  (set! *ent-near-y* y)
+  #t)
+
+(define (ent-last-toast) *ent-last-toast*)
+
+; ── slug for stable ids ──
+(define (ent-slug name)
+  (let ((n (string-length name)))
+    (let loop ((i 0) (acc (ent-empty)))
+      (if (>= i n)
+          (if (= (string-length acc) 0) "x" acc)
+        (let* ((ch (substring name i (+ i 1)))
+               (c (char->integer (car (string->list ch))))
+               (ok (or (and (>= c 97) (<= c 122))
+                       (and (>= c 48) (<= c 57))
+                       (and (>= c 65) (<= c 90)))))
+          (loop (+ i 1)
+                (if ok
+                    (string-append acc
+                      (if (and (>= c 65) (<= c 90))
+                          (list->string (list (integer->char (+ c 32))))
+                        ch))
+                  (string-append acc "-"))))))))
+
+(define (ent-downcase s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (acc (ent-empty)))
+      (if (>= i n) acc
+        (let* ((ch (substring s i (+ i 1)))
+               (c (char->integer (car (string->list ch))))
+               (out (if (and (>= c 65) (<= c 90))
+                        (list->string (list (integer->char (+ c 32))))
+                      ch)))
+          (loop (+ i 1) (string-append acc out)))))))
+
+(define (ent-has? hay needle)
+  (let ((nh (string-length hay))
+        (nn (string-length needle)))
+    (if (or (= nn 0) (> nn nh)) #f
+      (let loop ((i 0))
+        (if (> (+ i nn) nh) #f
+          (if (string=? (substring hay i (+ i nn)) needle) #t
+            (loop (+ i 1))))))))
+
+; ── NPC field access (works for short + full records) ──
+(define (npc-name n) (car n))
+(define (npc-x n) (car (cdr n)))
+(define (npc-y n) (car (cdr (cdr n))))
+(define (npc-kind n) (car (cdr (cdr (cdr n)))))
+(define (npc-speech n) (car (cdr (cdr (cdr (cdr n))))))
+
+(define (ent-nth xs i)
+  (if (<= i 0) (car xs)
+    (ent-nth (cdr xs) (- i 1))))
+
+(define (npc-sprite n)
+  (if (>= (length n) 6)
+      (let ((s (ent-nth n 5)))
+        (if (and (string? s) (> (string-length s) 0)) s (ent-empty)))
+    (ent-empty)))
+
+(define (npc-id n)
+  (if (>= (length n) 7)
+      (ent-nth n 6)
+    (string-append "npc-" (ent-slug (npc-name n)))))
+
+(define (npc-hp n)
+  (if (>= (length n) 8) (ent-nth n 7)
+    (if (string=? (npc-kind n) "friend") 12 10)))
+
+(define (npc-atk n)
+  (if (>= (length n) 9) (ent-nth n 8)
+    (if (string=? (npc-kind n) "friend") 2 3)))
+
+(define (npc-ai n)
+  (if (>= (length n) 10) (ent-nth n 9)
+    (if (string=? (npc-kind n) "friend") "friend" "wander")))
+
+(define (npc-traits n)
+  (if (>= (length n) 11) (ent-nth n 10)
+    (list (list "fierce" 2) (list "clingy" 3) (list "curious" 4)
+          (list "lazy" 3) (list "chatty" 4))))
+
+(define (npc-behaviors n)
+  (if (>= (length n) 12) (ent-nth n 11)
+    (list (list "idle" (npc-speech n))
+          (list "on-hit" "Ow!")
+          (list "on-talk" (npc-speech n)))))
+
+(define (npc-prev n)
+  (if (>= (length n) 13) (ent-nth n 12) (ent-empty)))
+
+(define (npc-trait-get n trait)
+  (let loop ((xs (npc-traits n)))
+    (if (null? xs) 0
+      (if (string=? (car (car xs)) trait)
+          (car (cdr (car xs)))
+        (loop (cdr xs))))))
+
+(define (npc-behavior-get n event)
+  (let loop ((xs (npc-behaviors n)))
+    (if (null? xs) #f
+      (if (string=? (car (car xs)) event)
+          (car (cdr (car xs)))
+        (loop (cdr xs))))))
+
+; Build full 13-field record
+(define (npc-make name x y kind speech sprite id hp atk ai traits behaviors prev)
+  (list name x y kind speech
+        (if (and (string? sprite) (> (string-length sprite) 0)) sprite (ent-empty))
+        id
+        (ent-clamp hp 1 99)
+        (ent-clamp atk 0 30)
+        ai
+        traits
+        behaviors
+        (if (string? prev) prev (ent-empty))))
+
+(define (npc-normalize n)
+  (if (>= (length n) 13)
+      n
+    (npc-make
+      (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+      (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n) (npc-ai n)
+      (npc-traits n) (npc-behaviors n) (npc-prev n))))
+
+(define (npc-line n)
+  (let ((n (npc-normalize n)))
+    (string-append
+      (npc-id n) " " (npc-name n)
+      " hp" (number->string (npc-hp n))
+      " atk" (number->string (npc-atk n))
+      " ai=" (npc-ai n)
+      " fierce" (number->string (npc-trait-get n "fierce"))
+      " clingy" (number->string (npc-trait-get n "clingy"))
+      " curious" (number->string (npc-trait-get n "curious"))
+      " \"" (npc-speech n) "\"")))
+
+(define (npc-snapshot! n)
+  (let ((full (npc-normalize n)))
+    (npc-make
+      (npc-name full) (npc-x full) (npc-y full) (npc-kind full) (npc-speech full)
+      (npc-sprite full) (npc-id full) (npc-hp full) (npc-atk full) (npc-ai full)
+      (npc-traits full) (npc-behaviors full)
+      (npc-line full))))
+
+(define (npc-diff-show n)
+  (let ((n (npc-normalize n))
+        (prev (npc-prev n)))
+    (if (= (string-length prev) 0)
+        (string-append "diff: (first) now " (npc-line n))
+      (string-append "was: " prev "  =>  now: " (npc-line n)))))
+
+(define (npc-brain-show n)
+  (let ((n (npc-normalize n)))
+    (string-append
+      (npc-line n)
+      " | kind=" (npc-kind n)
+      " beh=" (npc-behaviors-brief n))))
+
+(define (npc-behaviors-brief n)
+  (let loop ((xs (npc-behaviors n)) (s (ent-empty)) (c 0))
+    (if (or (null? xs) (>= c 3))
+        (if (= (string-length s) 0) "(none)" s)
+      (let ((b (car xs)))
+        (loop (cdr xs)
+              (string-append s "[" (car b) "->" (car (cdr b)) "]")
+              (+ c 1))))))
+
+; ── trait / behavior mutators (return new full record) ──
+(define (npc-traits-set traits trait val)
+  (let ((v (ent-clamp val 0 9)))
+    (let loop ((xs traits) (acc '()) (found #f))
+      (cond
+        ((null? xs)
+         (if found (reverse acc)
+           (append (reverse acc) (list (list trait v)))))
+        ((string=? (car (car xs)) trait)
+         (loop (cdr xs) (cons (list trait v) acc) #t))
+        (else (loop (cdr xs) (cons (car xs) acc) found))))))
+
+(define (npc-behaviors-set behs event speech)
+  (let loop ((xs behs) (acc '()) (found #f))
+    (cond
+      ((null? xs)
+       (if found (reverse acc)
+         (append (reverse acc) (list (list event speech)))))
+      ((string=? (car (car xs)) event)
+       (loop (cdr xs) (cons (list event speech) acc) #t))
+      (else (loop (cdr xs) (cons (car xs) acc) found)))))
+
+(define (npc-with-field n field value)
+  (let ((n (npc-normalize n)))
+    (cond
+      ((string=? field "name")
+       (npc-make value (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+                 (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n) (npc-ai n)
+                 (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "x")
+       (npc-make (npc-name n) (ent-clamp value 0 220) (npc-y n) (npc-kind n)
+                 (npc-speech n) (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n)
+                 (npc-ai n) (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "y")
+       (npc-make (npc-name n) (npc-x n) (ent-clamp value 0 80) (npc-kind n)
+                 (npc-speech n) (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n)
+                 (npc-ai n) (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "kind")
+       (npc-make (npc-name n) (npc-x n) (npc-y n) value (npc-speech n)
+                 (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n) (npc-ai n)
+                 (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "speech")
+       (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) value
+                 (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n) (npc-ai n)
+                 (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "sprite")
+       (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+                 value (npc-id n) (npc-hp n) (npc-atk n) (npc-ai n)
+                 (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "id")
+       (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+                 (npc-sprite n) value (npc-hp n) (npc-atk n) (npc-ai n)
+                 (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "hp")
+       (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+                 (npc-sprite n) (npc-id n) (ent-clamp value 1 99) (npc-atk n)
+                 (npc-ai n) (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "atk")
+       (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+                 (npc-sprite n) (npc-id n) (npc-hp n) (ent-clamp value 0 30)
+                 (npc-ai n) (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      ((string=? field "ai")
+       (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+                 (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n) value
+                 (npc-traits n) (npc-behaviors n) (npc-prev n)))
+      (else n))))
+
+(define (npc-with-trait n trait delta)
+  (let* ((n (npc-normalize n))
+         (cur (npc-trait-get n trait))
+         (nv (ent-clamp (+ cur delta) 0 9)))
+    (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+              (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n) (npc-ai n)
+              (npc-traits-set (npc-traits n) trait nv)
+              (npc-behaviors n) (npc-prev n))))
+
+(define (npc-with-behavior n event speech)
+  (let ((n (npc-normalize n)))
+    (npc-make (npc-name n) (npc-x n) (npc-y n) (npc-kind n) (npc-speech n)
+              (npc-sprite n) (npc-id n) (npc-hp n) (npc-atk n) (npc-ai n)
+              (npc-traits n)
+              (npc-behaviors-set (npc-behaviors n) event speech)
+              (npc-prev n))))
+
+; ability: taunt → on-hit speech; shield → +hp; dash → +atk
+(define (npc-with-ability n name on? param)
+  (let ((n (npc-normalize n)))
+    (cond
+      ((string=? name "taunt")
+       (if on?
+           (npc-with-behavior n "on-hit"
+             (if (> (string-length param) 0) param "Don't touch me!"))
+         n))
+      ((string=? name "shield")
+       (if on? (npc-with-field n "hp" (+ (npc-hp n) 5)) n))
+      ((string=? name "dash")
+       (if on? (npc-with-field n "atk" (+ (npc-atk n) 1)) n))
+      ((string=? name "heal")
+       (if on? (npc-with-field n "hp" (+ (npc-hp n) 3)) n))
+      (else n))))
+
+; ── World put / query ──
+(define (world-npc-put! npc)
+  (let ((full (npc-normalize npc))
+        (id (npc-id (npc-normalize npc)))
+        (name (npc-name (npc-normalize npc))))
+    (set! *world-npcs*
+      (let loop ((xs *world-npcs*) (acc '()) (found #f))
+        (cond
+          ((null? xs)
+           (if found (reverse acc)
+             (append (reverse acc) (list full))))
+          ((or (string=? (npc-id (npc-normalize (car xs))) id)
+               (string=? (npc-name (car xs)) name))
+           (loop (cdr xs) (cons full acc) #t))
+          (else (loop (cdr xs) (cons (car xs) acc) found)))))
+    ; Sync combat HP table if present
+    (try (combat-npc-hp-set! name (npc-hp full)) (catch (e) #f))
+    (set! *ent-target* full)
+    full))
+
+(define (entity-query-by-name name)
+  (let loop ((xs *world-npcs*))
+    (if (null? xs) #f
+      (if (string=? (ent-downcase (npc-name (car xs))) (ent-downcase name))
+          (npc-normalize (car xs))
+        (loop (cdr xs))))))
+
+(define (entity-query-by-id id)
+  (let loop ((xs *world-npcs*))
+    (if (null? xs) #f
+      (let ((n (npc-normalize (car xs))))
+        (if (string=? (npc-id n) id) n
+          (loop (cdr xs)))))))
+
+(define (entity-query-near)
+  (let loop ((xs *world-npcs*) (best #f) (best-d 999))
+    (if (null? xs)
+        best
+      (let* ((n (npc-normalize (car xs)))
+             (dx (if (> *ent-near-x* (npc-x n))
+                     (- *ent-near-x* (npc-x n))
+                   (- (npc-x n) *ent-near-x*)))
+             (dy (if (> *ent-near-y* (npc-y n))
+                     (- *ent-near-y* (npc-y n))
+                   (- (npc-y n) *ent-near-y*)))
+             (d (+ dx dy)))
+        (if (< d best-d)
+            (loop (cdr xs) n d)
+          (loop (cdr xs) best best-d))))))
+
+(define (entity-query-kind kind)
+  (let loop ((xs *world-npcs*) (acc '()))
+    (if (null? xs)
+        (reverse acc)
+      (let ((n (npc-normalize (car xs))))
+        (if (string=? (npc-kind n) kind)
+            (loop (cdr xs) (cons n acc))
+          (loop (cdr xs) acc))))))
+
+; spec: "npc:Name" | "npc#id" | "npc@near" | "npc:kind=friend" | "pet:self"
+(define (entity-query spec)
+  (let ((s (ent-downcase spec)))
+    (cond
+      ((or (string=? s "npc@near") (string=? s "@near") (string=? s "near"))
+       (entity-query-near))
+      ((or (string=? s "pet:self") (string=? s "pet") (string=? s "self")
+           (string=? s "genome") (string=? s "mochi"))
+       'pet-self)
+      ((and (>= (string-length s) 9)
+            (string=? (substring s 0 9) "npc:kind="))
+       (entity-query-kind (substring s 9 (string-length s))))
+      ((and (>= (string-length s) 4) (string=? (substring s 0 4) "npc#"))
+       (entity-query-by-id (substring s 4 (string-length s))))
+      ((and (>= (string-length s) 4) (string=? (substring s 0 4) "npc:"))
+       (entity-query-by-name (substring s 4 (string-length s))))
+      ((and (>= (string-length s) 1) (string=? (substring s 0 1) "#"))
+       (entity-query-by-id (substring s 1 (string-length s))))
+      (else (entity-query-by-name spec)))))
+
+; ── Intent apply (multi-line or single slash args) ──
+(define (entity-parse-bar body)
+  ; "a|b|c" → list of parts
+  (let ((n (string-length body)))
+    (let loop ((i 0) (start 0) (acc '()))
+      (if (>= i n)
+          (reverse (cons (substring body start n) acc))
+        (if (string=? (substring body i (+ i 1)) "|")
+            (loop (+ i 1) (+ i 1) (cons (substring body start i) acc))
+          (loop (+ i 1) start acc))))))
+
+(define (entity-ai-ok? a)
+  (or (string=? a "coward") (string=? a "hunter") (string=? a "guard")
+      (string=? a "wander") (string=? a "friend")))
+
+(define (entity-trait-ok? t)
+  (or (string=? t "fierce") (string=? t "clingy") (string=? t "lazy")
+      (string=? t "curious") (string=? t "chatty")))
+
+(define (entity-patch-one! npc op-line)
+  ; op-line without prefix handling done by caller; here field ops on one npc
+  ; Returns updated npc or #f
+  (let* ((n (string-length op-line))
+         (npc (if *ent-did-snap* npc (begin (set! *ent-did-snap* #t)
+                                            (npc-snapshot! npc)))))
+    (cond
+      ((and (>= n 4) (string=? (substring op-line 0 4) "set:"))
+       (let ((parts (entity-parse-bar (substring op-line 4 n))))
+         (if (< (length parts) 2) #f
+           (let ((f (ent-downcase (car parts)))
+                 (v (car (cdr parts))))
+             (cond
+               ((or (string=? f "hp") (string=? f "atk") (string=? f "x")
+                    (string=? f "y"))
+                (let ((num (string->number v)))
+                  (if num (npc-with-field npc f num) #f)))
+               ((or (string=? f "speech") (string=? f "name") (string=? f "kind")
+                    (string=? f "sprite") (string=? f "ai") (string=? f "id"))
+                (if (and (string=? f "ai") (not (entity-ai-ok? (ent-downcase v))))
+                    #f
+                  (npc-with-field npc f
+                    (if (string=? f "ai") (ent-downcase v) v))))
+               (else #f))))))
+      ((and (>= n 4) (string=? (substring op-line 0 4) "add:"))
+       (let ((parts (entity-parse-bar (substring op-line 4 n))))
+         (if (< (length parts) 2) #f
+           (let ((f (ent-downcase (car parts)))
+                 (d (string->number (car (cdr parts)))))
+             (if (not d) #f
+               (cond
+                 ((string=? f "hp")
+                  (npc-with-field npc "hp" (+ (npc-hp npc) d)))
+                 ((string=? f "atk")
+                  (npc-with-field npc "atk" (+ (npc-atk npc) d)))
+                 (else #f)))))))
+      ((and (>= n 6) (string=? (substring op-line 0 6) "trait:"))
+       (let ((parts (entity-parse-bar (substring op-line 6 n))))
+         (if (< (length parts) 2) #f
+           (let ((t (ent-downcase (car parts)))
+                 (d (string->number (car (cdr parts)))))
+             (if (and d (entity-trait-ok? t))
+                 (npc-with-trait npc t d)
+               #f)))))
+      ((and (>= n 3) (string=? (substring op-line 0 3) "ai:"))
+       (let ((a (ent-downcase (substring op-line 3 n))))
+         (if (entity-ai-ok? a) (npc-with-field npc "ai" a) #f)))
+      ((and (>= n 10) (string=? (substring op-line 0 10) "teach_npc:"))
+       (let ((parts (entity-parse-bar (substring op-line 10 n))))
+         (if (< (length parts) 2) #f
+           (npc-with-behavior npc (ent-downcase (car parts))
+                              (car (cdr parts))))))
+      ((and (>= n 8) (string=? (substring op-line 0 8) "ability:"))
+       (let ((parts (entity-parse-bar (substring op-line 8 n))))
+         (if (< (length parts) 2) #f
+           (let ((name (ent-downcase (car parts)))
+                 (on? (or (string=? (ent-downcase (car (cdr parts))) "on")
+                          (string=? (ent-downcase (car (cdr parts))) "1")
+                          (string=? (ent-downcase (car (cdr parts))) "true")))
+                 (param (if (>= (length parts) 3) (car (cdr (cdr parts)))
+                          (ent-empty))))
+             (npc-with-ability npc name on? param)))))
+      (else #f))))
+
+; Apply full intent text (multiple lines). Returns toast string.
+(define (intent-run! text)
+  (set! *ent-last-toast* "")
+  (set! *ent-want-diff* #f)
+  (set! *ent-did-snap* #f)
+  (set! *ent-target* #f)
+  (let ((n (string-length text))
+        (toast (ent-empty))
+        (patched 0)
+        (batch '()))
+    ; First pass: collect target + ops
+    (let loop ((i 0) (start 0))
+      (define (handle-line line)
+        (let ((ln (string-length line)))
+          (cond
+            ((= ln 0) #t)
+            ((and (>= ln 4) (string=? (substring line 0 4) "say:"))
+             (set! toast (substring line 4 ln))
+             #t)
+            ((and (>= ln 7) (string=? (substring line 0 7) "target:"))
+             (let ((spec (substring line 7 ln)))
+               (let ((q (entity-query spec)))
+                 (cond
+                   ((eq? q 'pet-self)
+                    (set! *ent-target* 'pet-self)
+                    #t)
+                   ((and (pair? q) (string? (car q)))
+                    ; single npc (name is string)
+                    (set! *ent-target* q)
+                    #t)
+                   ((and (pair? q) (pair? (car q)))
+                    ; list of npcs from kind=
+                    (set! batch q)
+                    (set! *ent-target* (car q))
+                    #t)
+                   (else
+                    (set! toast "Who? Walk closer or name them.")
+                    #f)))))
+            ((or (string=? line "snapshot:") (string=? line "snapshot"))
+             (set! *ent-did-snap* #f) ; force snap on next patch
+             #t)
+            ((or (string=? line "diff:") (string=? line "diff"))
+             (set! *ent-want-diff* #t)
+             #t)
+            ((or (string=? line "aura:commit") (string=? line "aura:commit:"))
+             (try (edsl-aura-commit!) (catch (e) #f))
+             #t)
+            ((eq? *ent-target* 'pet-self)
+             ; route trait-like ops to genome if available
+             (cond
+               ((and (>= ln 6) (string=? (substring line 0 6) "trait:"))
+                (let ((parts (entity-parse-bar (substring line 6 ln))))
+                  (if (>= (length parts) 2)
+                      (let ((t (car parts))
+                            (d (string->number (car (cdr parts)))))
+                        (if d
+                            (begin
+                              (try (genome-mutate! t d "intent") (catch (e) #f))
+                              (set! patched (+ patched 1))
+                              (set! toast
+                                (try (genome-last-toast) (catch (e) toast)))
+                              #t)
+                          #f))
+                    #f)))
+               (else #t)))
+            ((pair? *ent-target*)
+             (let ((upd (entity-patch-one! *ent-target* line)))
+               (if upd
+                   (begin
+                     (set! *ent-target* (world-npc-put! upd))
+                     (set! patched (+ patched 1))
+                     #t)
+                 #t)))
+            (else #t))))
+      (if (>= i n)
+          (begin
+            (if (< start n)
+                (handle-line (substring text start n))
+              #t)
+            (if (and *ent-want-diff* (pair? *ent-target*)
+                     (not (eq? *ent-target* 'pet-self)))
+                (set! toast
+                  (if (= (string-length toast) 0)
+                      (npc-diff-show *ent-target*)
+                    (string-append toast " | " (npc-diff-show *ent-target*))))
+              #t)
+            (if (and (= (string-length toast) 0) (> patched 0)
+                     (pair? *ent-target*) (not (eq? *ent-target* 'pet-self)))
+                (set! toast
+                  (string-append "Patched " (npc-name *ent-target*)
+                                 " (" (number->string patched) " ops)"))
+              #t)
+            (if (= (string-length toast) 0)
+                (set! toast "No changes.")
+              #t)
+            (set! *ent-last-toast* toast)
+            toast)
+        (if (string=? (substring text i (+ i 1)) "\n")
+            (begin
+              (if (> i start)
+                  (handle-line (substring text start i))
+                #t)
+              (loop (+ i 1) (+ i 1)))
+          (loop (+ i 1) start))))))
+
+; Slash helper: /npc Bunny set hp 20
+; args after "npc " already: "Bunny set hp 20" or "@near trait fierce +2"
+(define (entity-slash-npc! args)
+  (let ((n (string-length args)))
+    (if (= n 0)
+        (let ((near (entity-query-near)))
+          (if near
+              (begin
+                (set! *ent-last-toast* (npc-brain-show near))
+                (set! *ent-target* near)
+                *ent-last-toast*)
+            (begin
+              (set! *ent-last-toast* "No NPC nearby.")
+              *ent-last-toast*)))
+      ; split first token = target, rest = command
+      (let find ((i 0))
+        (if (and (< i n) (not (string=? (substring args i (+ i 1)) " ")))
+            (find (+ i 1))
+          (let* ((tgt (if (= i 0) args (substring args 0 i)))
+                 (rest (if (>= i n) (ent-empty)
+                         (let skip ((j i))
+                           (if (and (< j n)
+                                    (string=? (substring args j (+ j 1)) " "))
+                               (skip (+ j 1))
+                             (substring args j n)))))
+                 (q (entity-query tgt)))
+            (cond
+              ((not q)
+               (set! *ent-last-toast* "Who? Try /npc @near or a name.")
+               *ent-last-toast*)
+              ((eq? q 'pet-self)
+               (set! *ent-last-toast*
+                 (try (genome-brain-show) (catch (e) "pet genome n/a")))
+               *ent-last-toast*)
+              ((= (string-length rest) 0)
+               (set! *ent-target* q)
+               (set! *ent-last-toast* (npc-brain-show q))
+               *ent-last-toast*)
+              ((or (string=? rest "diff") (string=? (ent-downcase rest) "diff"))
+               (set! *ent-last-toast* (npc-diff-show q))
+               *ent-last-toast*)
+              ((or (string=? rest "brain") (string=? (ent-downcase rest) "brain")
+                   (string=? rest "show"))
+               (set! *ent-last-toast* (npc-brain-show q))
+               *ent-last-toast*)
+              (else
+               ; Build intent text: target + mapped ops
+               (let ((ops (entity-slash-rest-to-ops rest)))
+                 (intent-run!
+                   (string-append
+                     "target:npc:" (npc-name (if (pair? q) q q)) "\n"
+                     "snapshot:\n"
+                     ops
+                     "diff:\n")))))))))))
+
+; "set hp 20" | "trait fierce +2" | "ai hunter" | "teach on-hit Hi"
+(define (entity-slash-rest-to-ops rest)
+  (let* ((r (ent-downcase rest))
+         (n (string-length rest)))
+    ; find tokens by spaces — simple 3-token forms
+    (let* ((p1 (entity-find-space rest 0))
+           (w1 (if (< p1 0) rest (substring rest 0 p1)))
+           (r2 (if (< p1 0) (ent-empty) (entity-skip-space rest (+ p1 1))))
+           (p2 (entity-find-space r2 0))
+           (w2 (if (= (string-length r2) 0) (ent-empty)
+                 (if (< p2 0) r2 (substring r2 0 p2))))
+           (w3 (if (or (= (string-length r2) 0) (< p2 0)) (ent-empty)
+                 (entity-skip-space r2 (+ p2 1))))
+           (h (ent-downcase w1)))
+      (cond
+        ((and (string=? h "set") (> (string-length w2) 0) (> (string-length w3) 0))
+         (string-append "set:" (ent-downcase w2) "|" w3 "\n"))
+        ((and (string=? h "add") (> (string-length w2) 0) (> (string-length w3) 0))
+         (string-append "add:" (ent-downcase w2) "|" w3 "\n"))
+        ((and (string=? h "trait") (> (string-length w2) 0) (> (string-length w3) 0))
+         (string-append "trait:" (ent-downcase w2) "|" w3 "\n"))
+        ((and (string=? h "ai") (> (string-length w2) 0))
+         (string-append "ai:" (ent-downcase w2) "\n"))
+        ((and (or (string=? h "teach") (string=? h "teach_npc"))
+              (> (string-length w2) 0) (> (string-length w3) 0))
+         (string-append "teach_npc:" (ent-downcase w2) "|" w3 "\n"))
+        ((and (string=? h "ability") (> (string-length w2) 0))
+         (string-append "ability:" (ent-downcase w2) "|"
+                        (if (> (string-length w3) 0) w3 "on") "\n"))
+        ((string=? h "hp")
+         (string-append "set:hp|" w2 "\n"))
+        ((string=? h "atk")
+         (string-append "set:atk|" w2 "\n"))
+        (else
+         (string-append "set:speech|" rest "\n"))))))
+
+(define (entity-find-space s i)
+  (let ((n (string-length s)))
+    (let loop ((j i))
+      (if (>= j n) -1
+        (if (string=? (substring s j (+ j 1)) " ") j
+          (loop (+ j 1)))))))
+
+(define (entity-skip-space s i)
+  (let ((n (string-length s)))
+    (let loop ((j i))
+      (if (>= j n) (ent-empty)
+        (if (string=? (substring s j (+ j 1)) " ")
+            (loop (+ j 1))
+          (substring s j n))))))
+
+; Free-text offline heuristic → intent (no LLM).
+(define (entity-offline-intent text)
+  (let ((t (ent-downcase text)))
+    (cond
+      ((and (ent-has? t "fierce") (or (ent-has? t "more") (ent-has? t "make")
+                                       (ent-has? t "改") (ent-has? t "凶")))
+       (string-append
+         "say:Got fiercer!\n"
+         "target:npc@near\n"
+         "snapshot:\n"
+         "trait:fierce|2\n"
+         "ai:hunter\n"
+         "diff:\n"))
+      ((and (ent-has? t "cling") (or (ent-has? t "more") (ent-has? t "make")))
+       (string-append
+         "say:More clingy!\n"
+         "target:npc@near\n"
+         "snapshot:\n"
+         "trait:clingy|2\n"
+         "diff:\n"))
+      ((and (or (ent-has? t "hp") (ent-has? t "health") (ent-has? t "血"))
+            (or (ent-has? t "20") (ent-has? t "buff") (ent-has? t "加")))
+       (string-append
+         "say:HP buffed!\n"
+         "target:npc@near\n"
+         "snapshot:\n"
+         "set:hp|20\n"
+         "diff:\n"))
+      ((or (ent-has? t "taunt") (ent-has? t "嘲讽"))
+       (string-append
+         "say:Taunt ready!\n"
+         "target:npc@near\n"
+         "snapshot:\n"
+         "ability:taunt|on|Don't touch me!\n"
+         "diff:\n"))
+      ((and (ent-has? t "guard") (or (ent-has? t "hold") (ent-has? t "守")))
+       (string-append
+         "say:Holding the line!\n"
+         "target:npc@near\n"
+         "snapshot:\n"
+         "ai:guard\n"
+         "trait:curious|-2\n"
+         "diff:\n"))
+      (else #f))))

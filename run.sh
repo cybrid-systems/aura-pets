@@ -41,8 +41,8 @@ MODE="auto"
 # tui-prompt MUST load before cat-demo / cyber-cat-stage: play-handle-event!
 # and live-dispatch close over prompt-handle at load time. Loading prompt
 # after the example left every key act=nil (events arrived, handler unbound).
-# pet-genome after edsl (speech AST) and before pet-game (care + soft-tick).
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-genome.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
+# pet-genome after edsl; entity after world (query→patch→diff NPCs).
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/entity.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-genome.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
 
@@ -69,6 +69,10 @@ Play: arrows move | 1 2 3 care | Ctrl+D quit | 2× Ctrl+C quit
     /guide lazy|fierce…   player steers personality
     type: "be more clingy" / "more fierce" (no slash)
     /teach feed Hi        rewrite speech rule (logged as code edit)
+    /npc Bunny            show living record (query)
+    /npc Bunny set hp 20  patch field (mutate)
+    /npc @near trait fierce +2
+    type: "more fierce" near an NPC → offline intent patch
   Slash commands (type /… then Enter):
     /eat /play /sleep     care
     /grow /back           morph forms (Kitten→…→Dragon)

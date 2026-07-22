@@ -123,6 +123,8 @@
   (if (>= (length *world-npcs*) *world-max-npcs*)
       #f
     (begin
+      ; Keep raw record; entity.aura normalizes on query/patch (Aura try
+      ; returns status, not value — do not wrap npc-normalize in try here).
       (set! *world-npcs* (append *world-npcs* (list npc)))
       (set! *world-ok* #t)
       #t)))
@@ -473,6 +475,8 @@
                (speech-end (if (< p5 0) n p5))
                (speech (substring body (+ p4 1) speech-end))
                (sprite (if (< p5 0) #f (substring body (+ p5 1) n))))
+          ; Extended play-safe record (entity.aura normalizes to full schema).
+          ; Keep 6-field core for draw/combat; entity accessors fill defaults.
           (list name
                 (string->number xs)
                 (string->number ys)

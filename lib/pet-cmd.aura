@@ -55,8 +55,8 @@
 
 (define (cmd-help-text)
   (string-append
-    "/brain /diff /mutate /guide lazy|fierce|clingy "
-    "/teach feed Hi | /eat /grow /fire /help"))
+    "/brain /diff /mutate /guide lazy | /npc Bunny set hp 20 "
+    "/npc @near trait fierce +2 | /teach feed Hi | /help"))
 
 ; Core slash dispatcher. pet is the live pet record.
 (define (cmd-run pet raw)
@@ -135,6 +135,18 @@
                (set! *speech* "Try: lazy fierce clingy curious quiet chatty calm")
                (set! *last-act* "guide")
                (cons #t pet))))))
+
+      ; /npc [Name|@near] [set hp 20|trait fierce +2|diff|brain]
+      ((or (string=? head "npc") (string=? head "entity")
+           (string=? head "mob") (string=? head "unit"))
+       (try (ent-set-near! *cmd-px* *cmd-py*) (catch (e) #f))
+       (let ((toast
+               (try (entity-slash-npc! args)
+                    (catch (e) "NPC edit failed"))))
+         (set! *speech* toast)
+         (set! *last-act* "npc-mutate")
+         (anim-start! "evolve" 8)
+         (cons #t pet)))
 
       ; ── care ──
       ((or (string=? head "eat") (string=? head "feed") (string=? head "1")
@@ -339,4 +351,5 @@
         (string=? head "wpn") (string=? head "gun")
         (string=? head "diff") (string=? head "mutate") (string=? head "guide")
         (string=? head "genome") (string=? head "code") (string=? head "evo")
-        (string=? head "rewrite") (string=? head "temper"))))
+        (string=? head "rewrite") (string=? head "temper")
+        (string=? head "npc") (string=? head "entity") (string=? head "mob"))))

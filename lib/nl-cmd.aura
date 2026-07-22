@@ -189,6 +189,7 @@
            (if sprite (begin (world-sprite-add! sprite) #t) #f)))
         ((and (>= n 6) (string=? (substring line 0 6) "teach:"))
          (nl-apply-teach! (substring line 6 n)))
+        ; target:/set:/trait:… applied as a multi-line block in nl-apply-text!
         ((and (>= n 5) (string=? (substring line 0 5) "care:"))
          ; care is handled by caller via return; mark as say only here
          (set! *nl-last-say*
@@ -207,7 +208,7 @@
              #t)))
         ((or (string=? line "help:") (string=? line "help"))
          (set! *nl-last-say*
-           "Try: snowy park / teach feed Pizza! / brain")
+           "Try: /npc Bunny set hp 20 | /brain | teach feed Pizza!")
          #t)
         (else #f)))))
 
@@ -230,6 +231,16 @@
                   #t)))
           (find (+ i 1)))))))
 
+(define (nl-text-has-target? text)
+  (try
+    (let ((n (string-length text)))
+      (let loop ((i 0))
+        (if (> (+ i 7) n) #f
+          (if (string=? (substring text i (+ i 7)) "target:")
+              #t
+            (loop (+ i 1))))))
+    (catch (e) #f)))
+
 (define (nl-apply-text! text)
   (set! *nl-last-say* "")
   (set! *nl-did-aura* #f)
@@ -239,6 +250,17 @@
           (begin
             (if (< start n)
                 (nl-apply-line! (substring text start n))
+              #t)
+            ; Multi-line entity intent: target: + set:/trait:/… as one block
+            (if (nl-text-has-target? text)
+                (try
+                  (begin
+                    (intent-run! text)
+                    (if (> (string-length (ent-last-toast)) 0)
+                        (set! *nl-last-say* (ent-last-toast))
+                      #t)
+                    #t)
+                  (catch (e) #f))
               #t)
             #t)
         (if (string=? (substring text i (+ i 1)) "\n")

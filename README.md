@@ -33,7 +33,10 @@ cd /path/to/aura-pets
 | `/diff` | Before → after last evolution |
 | `/mutate` | Force one self-rewrite (toast + log) |
 | `/guide lazy` | Steer traits (fierce/clingy/curious/…) |
-| free text | Guide phrases (`be more clingy`) or **LLM director** |
+| `/npc Bunny` | Query living NPC record |
+| `/npc Bunny set hp 20` | Mutate field (also `trait fierce +2`, `ai hunter`) |
+| `/npc @near …` | Patch nearest NPC |
+| free text | Guide phrases / NPC intent (`more fierce`) or **LLM director** |
 
 ### Pure Aura LLM / worldgen (no Python required)
 
