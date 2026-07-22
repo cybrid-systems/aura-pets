@@ -46,7 +46,8 @@ MODE="auto"
 LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/entity.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-genome.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-save.aura\") (load \"$SCRIPT_DIR/lib/pet-tutorial.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
-CONTINUE_PLAY=0
+# auto = resume latest save if present; 1 = force continue; 0 = new life
+CONTINUE_PLAY=auto
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -55,8 +56,9 @@ while [ $# -gt 0 ]; do
 Aura Pets
 
   ./run.sh                 play on TTY, else demo
-  ./run.sh play              interactive (new life)
-  ./run.sh play --continue   restore ~/.aura-pets/saves/latest.aura
+  ./run.sh play              resume save if exists, else new life
+  ./run.sh play --continue   force restore ~/.aura-pets/saves/latest.aura
+  ./run.sh play --new        ignore save, start fresh
   ./run.sh --demo [N]        headless frames
   ./run.sh --cyber [N]       3D cyber cat stage (headless frames)
   ./run.sh --cyber-orbit [N] 3D cyber cat stage orbit showcase
@@ -79,7 +81,7 @@ Play: arrows move | 1 2 3 care | Ctrl+D quit | 2× Ctrl+C quit
     /export [/path]       share/debug export (exports/ or /tmp)
     type: "be more clingy" / "all enemies fiercer"
   Prompt: Esc=NORMAL (hide box) · i=INSERT · :=slash · Tab complete
-  Save: quit auto-saves latest; --continue or /load to resume
+  Save: quit auto-saves latest; play auto-resumes; --new for fresh
   Slash: /eat /grow /fire /fight /heal /status /talk /world /help /bg …
 World/NL: pure Aura. Key: ~/code/keys/minimax
 
@@ -89,6 +91,7 @@ USAGE
       ;;
     play|--interactive|--play) MODE="play"; shift ;;
     --continue|-c) CONTINUE_PLAY=1; shift ;;
+    --new|--fresh) CONTINUE_PLAY=0; shift ;;
     --log) LOG_FILE="$2"; shift 2 || shift ;;
     --demo)
       MODE="demo"
@@ -123,10 +126,16 @@ case "$MODE" in
   play)
     # plog-start! uses fixed default; override path before entry
     # tui-prompt already in LOAD_CORE (before EXAMPLE).
-    if [ "$CONTINUE_PLAY" = "1" ] || [ "${AURA_PETS_CONTINUE:-}" = "1" ]; then
+    # Default auto: resume ~/.aura-pets/saves/latest.aura when present.
+    # --continue forces load; --new / CONTINUE=0 starts fresh.
+    if [ -n "${AURA_PETS_CONTINUE+x}" ] && [ "$CONTINUE_PLAY" = "auto" ]; then
+      : # keep user-exported AURA_PETS_CONTINUE
+    elif [ "$CONTINUE_PLAY" = "1" ]; then
       export AURA_PETS_CONTINUE=1
+    elif [ "$CONTINUE_PLAY" = "0" ]; then
+      export AURA_PETS_CONTINUE=0
     else
-      unset AURA_PETS_CONTINUE 2>/dev/null || export AURA_PETS_CONTINUE=0
+      export AURA_PETS_CONTINUE=auto
     fi
     EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (plog-set-path! \"$LOG_FILE\") (play-entry))"
     export AURA_TUI_LIVE=1

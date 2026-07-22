@@ -9,8 +9,9 @@ Design: [docs/DESIGN.md](docs/DESIGN.md) · Business here · Render bugs → **a
 ```bash
 cd /path/to/aura-grok && cmake -B build && cmake --build build --target aura -j
 cd /path/to/aura-pets
-./run.sh play              # new life
-./run.sh play --continue   # restore ~/.aura-pets/saves/latest.aura
+./run.sh play              # resume save if exists, else new life
+./run.sh play --continue   # force restore ~/.aura-pets/saves/latest.aura
+./run.sh play --new        # ignore save, start fresh
 # optional: calmer FPS  AURA_PETS_FRAME_SLEEP=0.016 ./run.sh play
 ```
 
@@ -64,7 +65,7 @@ cd /path/to/aura-pets
 | Share export | `~/.aura-pets/exports/session.aura` |
 | Debug copy | `/tmp/aura-pets-session.aura` |
 
-Default `./run.sh play` starts **new** with a short tip: type **`/tutorial`** for a friendly interactive guide (topics + `/n`/`/b` flip). Free play is always open — nothing is forced.
+Default `./run.sh play` **resumes** `~/.aura-pets/saves/latest.aura` when present (theme, bg recipe, love, genome, form, position). Use `--new` for a fresh life + tutorial tip. Quit and `/save` both write full progress.
 
 ### Prompt (vi modes + Grok-style)
 

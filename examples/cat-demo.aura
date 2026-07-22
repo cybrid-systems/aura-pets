@@ -213,6 +213,17 @@
            (else
             (prompt-set-log! (game-speech))
             (plog "cmd" (string-append "in=" cmd " act=" act))
+            ; /load restores form on pet; also snap position if pet: had x,y
+            (if (string=? act "load")
+                (try
+                  (if (and (number? (save-pet-x)) (>= (save-pet-x) 0)
+                           (number? (save-pet-y)) (>= (save-pet-y) 0))
+                      (begin
+                        (set! *p-x* (clamp-x (save-pet-x)))
+                        (set! *p-y* (clamp-y (save-pet-y))))
+                    #t)
+                  (catch (e) #f))
+              #t)
             r)))))
     ((or (string=? cmd "world") (string=? cmd "gen") (string=? cmd "g"))
      (if (nl-busy?)
@@ -644,8 +655,8 @@
                                " async=0"))
   (plog-flush!)
   (try (plog "genome" (genome-line)) (catch (e) #f))
-  ; Optional continue: AURA_PETS_CONTINUE=1 or ./run.sh play --continue
-  ; New life: friendly tip pointing at interactive /tutorial guide (not a forced tour).
+  ; Continue when AURA_PETS_CONTINUE=1|auto (run.sh play auto-resumes save).
+  ; --new / CONTINUE=0 starts fresh + tutorial tip.
   (if (try (play-maybe-continue!) (catch (e) #f))
       (try (tut-off!) (catch (e) #f))
     (try
@@ -689,10 +700,10 @@
                  (plog "ERROR" "play-step-exception")
                  (plog-flush!))))))
   (plog-quit *p-quit* *p-frame* (pet-snap *p-pet*))
-  ; Auto-save life progress + debug export copy.
+  ; Auto-save full life (world + genome + live pet form/pos/hp).
   (try
     (begin
-      (pet-save-default!)
+      (pet-save-live! *p-pet* *p-x* *p-y*)
       (plog "save" (try (save-latest-path) (catch (e) "latest")))
       (try (pet-export! (save-empty)) (catch (e) #f)))
     (catch (e) (plog "save" "failed")))
@@ -713,16 +724,30 @@
   (cat-demo-interactive)
   #t)
 
-; After interactive setup, optionally restore save (--continue).
-; Called from cat-demo-interactive after game-reset! when env set.
+; Restore save when env says continue/auto and file exists.
+; Applies world/genome/love then live pet form + position.
 (define (play-maybe-continue!)
   (if (try (pet-should-continue?) (catch (e) #f))
       (let ((ok (try (pet-load-default!) (catch (e) #f))))
         (if ok
             (begin
+              ; Apply pet: line onto *p-pet* (form / vitals / hp)
+              (try
+                (set! *p-pet* (save-apply-pet-live! *p-pet*))
+                (catch (e) #f))
+              ; Restore map position if saved
+              (try
+                (if (and (number? (save-pet-x)) (>= (save-pet-x) 0)
+                         (number? (save-pet-y)) (>= (save-pet-y) 0))
+                    (begin
+                      (set! *p-x* (clamp-x (save-pet-x)))
+                      (set! *p-y* (clamp-y (save-pet-y))))
+                  #t)
+                (catch (e) #f))
               (game-set-speech! (try (save-last-toast) (catch (e) "Restored!")))
               (prompt-set-log! (game-speech))
               (plog "load" (try (save-last-toast) (catch (e) "ok")))
+              (try (plog "world" (world-recipe-summary)) (catch (e) #f))
               #t)
           (begin
             (plog "load" "no-save-or-fail")

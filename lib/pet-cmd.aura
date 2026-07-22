@@ -218,8 +218,9 @@
          (anim-start! "evolve" 8)
          (cons #t pet)))
 
-      ; /save [path] — life progress (genome + edsl + NPCs)
+      ; /save [path] — full life (world + genome + form + pos + hp)
       ((or (string=? head "save") (string=? head "sav"))
+       (try (save-set-live! pet *cmd-px* *cmd-py*) (catch (e) #f))
        (set! *speech*
          (try
            (begin
@@ -232,7 +233,7 @@
        (cmd-tut-after! "save" "Life saved!")
        (cons #t pet))
 
-      ; /load [path] — restore mind (play-safe data AST)
+      ; /load [path] — restore mind + live pet form/pos
       ((or (string=? head "load") (string=? head "continue")
            (string=? head "restore"))
        (set! *speech*
@@ -245,7 +246,9 @@
            (catch (e) "Load failed")))
        (set! *last-act* "load")
        (try (tut-off!) (catch (e) #f))
-       (cons #t pet))
+       ; Return pet with form/vitals applied; caller may also fix x/y
+       (let ((u (try (save-apply-pet-live! pet) (catch (e) pet))))
+         (cons #t u)))
 
       ; /new — new life (soft reset); tip points at interactive guide
       ((or (string=? head "new") (string=? head "newgame")
