@@ -60,14 +60,23 @@ cd /path/to/aura-pets
 
 Default `./run.sh play` starts **new** with a short tip: type **`/tutorial`** for a friendly interactive guide (topics + `/n`/`/b` flip). Free play is always open — nothing is forced.
 
-### Prompt (Grok-style)
+### Prompt (vi modes + Grok-style)
+
+| Mode | Feel |
+|------|------|
+| **NORMAL** (default) | Prompt **hidden** — full game; arrows / 1 2 3 / Space |
+| **INSERT** | Prompt **box** — type `/cmds` and free text |
 
 | Key | Action |
 |-----|--------|
+| **Esc** | → NORMAL (hide prompt; keep draft buffer) |
+| **i** / **a** | → INSERT (show prompt) |
+| **:** | → INSERT with leading `/` (command-ready) |
+| **Enter** (non-empty) | Submit then back to NORMAL |
 | **Tab** | Slash complete (`/br` → `/brain `); cycle matches |
 | **↑ / ↓** | History when line non-empty or starts with `/` |
 | **C-p / C-n** | History always (empty line still OK) |
-| Empty **↑↓←→** | Move pet (game nav) |
+| Empty **↑↓←→** (INSERT) | Move pet |
 | Status line | Live completion hints (`Tab → /brain`) |
 | Ghost text | Dim suffix after cursor for unique match |
 

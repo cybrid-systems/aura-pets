@@ -78,7 +78,7 @@ Play: arrows move | 1 2 3 care | Ctrl+D quit | 2× Ctrl+C quit
     /new                  new life (soft reset genome/edsl/love)
     /export [/path]       share/debug export (exports/ or /tmp)
     type: "be more clingy" / "all enemies fiercer"
-  Prompt (Grok-style): Tab complete · ↑↓ history (non-empty) · C-p/C-n always
+  Prompt: Esc=NORMAL (hide box) · i=INSERT · :=slash · Tab complete
   Save: quit auto-saves latest; --continue or /load to resume
   Slash: /eat /grow /fire /fight /heal /status /talk /world /help /bg …
 World/NL: pure Aura. Key: ~/code/keys/minimax

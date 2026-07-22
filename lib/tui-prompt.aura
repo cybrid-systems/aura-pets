@@ -1,36 +1,45 @@
-; lib/tui-prompt.aura — bottom command line (Grok Build–style).
+; lib/tui-prompt.aura — bottom command line (Grok Build–style + vi modes).
 ;
 ; Features:
+;   - vi-like modes: NORMAL (prompt hidden) / INSERT (prompt box)
+;   - Esc → NORMAL · i/a → INSERT · : → INSERT with leading /
 ;   - real cursor index (not just trailing _)
 ;   - Mac/PC Backspace: code 127 (DEL) and 8 (BS)
-;   - Emacs-style line editing (C-a/e/b/f/k/u/w, Home/End)
+;   - Emacs-style line editing in INSERT (C-a/e/b/f/k/u/w, Home/End)
 ;   - Prompt history: Up/Down when non-empty; C-p / C-n always
 ;     (empty-line arrows still move the pet — game feel)
 ;   - Slash autocomplete: type /… then Tab; status shows matches
 ;   - Ghost completion after caret when unique / prefix match
 ;   - UTF-8 codepoint-aware cursor
 ;
-; Emacs map:
+; Modes:
+;   NORMAL — full game; arrows/1/2/3/Space; no input box
+;   INSERT — Grok-style box; type commands; Esc back to NORMAL
+;
+; Emacs map (INSERT):
 ;   C-a beginning   C-e end
 ;   C-b left        C-f right
 ;   C-p history↑    C-n history↓
 ;   C-d empty → quit; non-empty → delete-fwd
 ;   Tab slash-complete
-;   Enter submit (+ push history)
+;   Enter submit (+ push history); non-empty submit → NORMAL
 ; Quit: Ctrl+D empty, or double Ctrl+C (app). q-quit off if *prompt-no-q-quit?*
 ;
 ; API:
 ;   (prompt-init! y)
 ;   (prompt-set-commands! names)  ; list of "brain" "save" … (no slash)
 ;   (prompt-set-log! msg)
+;   (prompt-mode) (prompt-normal?) (prompt-insert?)
+;   (prompt-enter-normal!) (prompt-enter-insert!)
 ;   (prompt-buf) (prompt-log) (prompt-hot) (prompt-hint)
-;   (prompt-handle e) → "quit"|"submit"|"edit"|"hot"|#f
+;   (prompt-handle e) → "quit"|"submit"|"edit"|"hot"|"mode"|"nav-*"|#f
 ;   (prompt-take-submit!)
 ;   (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
-; Box:
+; Box (INSERT):
 ;   ┌─ status / completion hints ───────┐
 ;   │ > /bra█in_   (ghost)              │
 ;   └───────────────────────────────────┘
+; NORMAL: single status line at *prompt-y*+1
 
 (define *prompt-y* 0)
 (define *prompt-buf* "x")
@@ -71,9 +80,39 @@
 (define *prompt-ghost* "x")
 ; Cycle index when multiple Tab matches.
 (define *prompt-tab-i* 0)
+; vi-like: "normal" | "insert"
+(define *prompt-mode* "insert")
 
 (define (prompt-set-width! n)
   (set! *prompt-width* n)
+  #t)
+
+(define (prompt-mode) *prompt-mode*)
+(define (prompt-normal?) (string=? *prompt-mode* "normal"))
+(define (prompt-insert?) (string=? *prompt-mode* "insert"))
+
+(define (prompt-enter-normal!)
+  (set! *prompt-mode* "normal")
+  (set! *prompt-ghost* (prompt-empty))
+  (set! *prompt-hint* (prompt-empty))
+  (set! *prompt-tab-i* 0)
+  ; Keep *prompt-buf* so i returns to the same draft.
+  (set! *prompt-log* "NORMAL · i type · : slash · arrows move · 1/2/3 care")
+  #t)
+
+(define (prompt-enter-insert!)
+  (set! *prompt-mode* "insert")
+  (set! *prompt-log* "INSERT · Esc play · Tab complete · C-d quit")
+  (prompt-refresh-complete!)
+  #t)
+
+; ":" — INSERT with a fresh slash command line (vi-style cmdline).
+(define (prompt-enter-insert-cmd!)
+  (prompt-clear-buf!)
+  (set! *prompt-buf* "/")
+  (set! *prompt-cursor* 1)
+  (prompt-enter-insert!)
+  (prompt-refresh-complete!)
   #t)
 
 (define (prompt-set-commands! names)
@@ -117,7 +156,9 @@
   (set! *prompt-ghost* (prompt-empty))
   (set! *prompt-tab-i* 0)
   ; Keep history across re-init of same session (don't clear *prompt-hist*).
-  (set! *prompt-log* "Tab complete · ↑↓ history · /help · C-d quit")
+  ; Default INSERT so demos/type work; play-entry may switch to NORMAL.
+  (set! *prompt-mode* "insert")
+  (set! *prompt-log* "INSERT · Esc play · Tab · /tutorial · C-d quit")
   #t)
 
 (define (prompt-set-log! msg)
@@ -652,6 +693,13 @@
 (define (prompt-is-hist-down? ch)
   (= (prompt-ch-code ch) 14))
 
+; Escape: engine delivers U+001B (codepoint 27) as 1-byte string.
+(define (prompt-is-esc? ch)
+  (or (= (prompt-ch-code ch) 27)
+      (string=? ch "Escape")
+      (string=? ch "Esc")
+      (string=? ch "ESC")))
+
 ; Empty-line hotkeys: care digits + Space fire (tank mode).
 (define (prompt-is-hot? ch)
   (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
@@ -663,7 +711,109 @@
     ((or (string=? ch " ") (string=? ch "Space")) "fire")
     (else ch)))
 
-; Handle one tui:read-event. → "quit"|"submit"|"edit"|"hot"|#f
+; NORMAL mode: game keys only; i/a/: open INSERT.
+(define (prompt-handle-normal ch)
+  (cond
+    ((prompt-is-esc? ch) #f)
+    ((or (string=? ch "i") (string=? ch "I")
+         (string=? ch "a") (string=? ch "A"))
+     (prompt-enter-insert!)
+     "mode")
+    ((string=? ch ":")
+     (prompt-enter-insert-cmd!)
+     "mode")
+    ; Fullscreen game nav — always (no empty-buf gate)
+    ((prompt-is-left? ch) "nav-left")
+    ((prompt-is-right? ch) "nav-right")
+    ((prompt-is-up? ch) "nav-up")
+    ((prompt-is-down? ch) "nav-down")
+    ((prompt-is-hot? ch)
+     (set! *prompt-hot* (prompt-hot-cmd ch))
+     "hot")
+    ((prompt-is-ctrl-d? ch) "quit")
+    ((and (not *prompt-no-q-quit?*)
+          (or (string=? ch "q") (string=? ch "Q")))
+     "quit")
+    (else #f)))
+
+; INSERT mode: line editor + Esc → NORMAL.
+(define (prompt-handle-insert ch)
+  (let ((empty? (= (string-length *prompt-buf*) 0))
+        (slash? (and (> (string-length *prompt-buf*) 0)
+                     (string=? (substring *prompt-buf* 0 1) "/")))
+        (hist-browse? (>= *prompt-hist-idx* 0)))
+    (cond
+      ((prompt-is-esc? ch)
+       (prompt-enter-normal!)
+       "mode")
+      ((prompt-is-enter? ch)
+       (let ((had (> (string-length *prompt-buf*) 0)))
+         (prompt-hist-push! *prompt-buf*)
+         (set! *prompt-submit* *prompt-buf*)
+         (set! *prompt-buf* (prompt-empty))
+         (set! *prompt-cursor* 0)
+         (set! *prompt-ghost* (prompt-empty))
+         (set! *prompt-hint* (prompt-empty))
+         (set! *prompt-tab-i* 0)
+         ; After a real command, drop to NORMAL so the world fills the view.
+         (if had (prompt-enter-normal!) #t)
+         "submit"))
+      ((prompt-is-tab? ch)
+       (if (prompt-tab-complete!) "edit" #f))
+      ((or (prompt-is-hist-up? ch)
+           (and (prompt-is-up? ch)
+                (or (not empty?) hist-browse? slash?)))
+       (if (prompt-hist-up!) "edit" #f))
+      ((or (prompt-is-hist-down? ch)
+           (and (prompt-is-down? ch)
+                (or (not empty?) hist-browse? slash?)))
+       (if (prompt-hist-down!) "edit" #f))
+      ((prompt-is-bs? ch)
+       (prompt-backspace!)
+       "edit")
+      ((and empty? (prompt-is-ctrl-d? ch))
+       "quit")
+      ((prompt-is-del-fwd? ch)
+       (prompt-delete-fwd!)
+       "edit")
+      ((and empty? (not hist-browse?) (prompt-is-left? ch)) "nav-left")
+      ((and empty? (not hist-browse?) (prompt-is-right? ch)) "nav-right")
+      ((and empty? (not hist-browse?) (prompt-is-up? ch)) "nav-up")
+      ((and empty? (not hist-browse?) (prompt-is-down? ch)) "nav-down")
+      ((prompt-is-left? ch)
+       (prompt-move! -1)
+       "edit")
+      ((prompt-is-right? ch)
+       (prompt-move! 1)
+       "edit")
+      ((prompt-is-home? ch)
+       (prompt-to-start!)
+       "edit")
+      ((prompt-is-end? ch)
+       (prompt-to-end!)
+       "edit")
+      ((prompt-is-kill-end? ch)
+       (prompt-kill-to-end!)
+       "edit")
+      ((prompt-is-kill-line? ch)
+       (prompt-kill-line!)
+       "edit")
+      ((prompt-is-kill-word? ch)
+       (prompt-kill-word-back!)
+       (prompt-refresh-complete!)
+       "edit")
+      ((and (not *prompt-no-q-quit?*) empty?
+            (or (string=? ch "q") (string=? ch "Q")))
+       "quit")
+      ((and empty? (prompt-is-hot? ch))
+       (set! *prompt-hot* (prompt-hot-cmd ch))
+       "hot")
+      ((prompt-printable? ch)
+       (prompt-insert! ch)
+       "edit")
+      (else #f))))
+
+; Handle one tui:read-event. → "quit"|"submit"|"edit"|"hot"|"mode"|"nav-*"|#f
 (define (prompt-handle e)
   (if (not (pair? e))
       #f
@@ -671,77 +821,10 @@
         "quit"
       (if (not (string=? (car e) "key"))
           #f
-        (let ((ch (cdr e))
-              (empty? (= (string-length *prompt-buf*) 0))
-              (slash? (and (> (string-length *prompt-buf*) 0)
-                           (string=? (substring *prompt-buf* 0 1) "/")))
-              (hist-browse? (>= *prompt-hist-idx* 0)))
-          (cond
-            ((prompt-is-enter? ch)
-             (prompt-hist-push! *prompt-buf*)
-             (set! *prompt-submit* *prompt-buf*)
-             (set! *prompt-buf* (prompt-empty))
-             (set! *prompt-cursor* 0)
-             (set! *prompt-ghost* (prompt-empty))
-             (set! *prompt-hint* (prompt-empty))
-             (set! *prompt-tab-i* 0)
-             "submit")
-            ((prompt-is-tab? ch)
-             (if (prompt-tab-complete!) "edit" #f))
-            ((or (prompt-is-hist-up? ch)
-                 ; Non-empty or browsing: ↑ = history (Grok-style)
-                 (and (prompt-is-up? ch)
-                      (or (not empty?) hist-browse? slash?)))
-             (if (prompt-hist-up!) "edit" #f))
-            ((or (prompt-is-hist-down? ch)
-                 (and (prompt-is-down? ch)
-                      (or (not empty?) hist-browse? slash?)))
-             (if (prompt-hist-down!) "edit" #f))
-            ((prompt-is-bs? ch)
-             (prompt-backspace!)
-             "edit")
-            ; Empty line: Ctrl+D = quit (EOF). Non-empty: del-fwd below.
-            ((and empty? (prompt-is-ctrl-d? ch))
-             "quit")
-            ((prompt-is-del-fwd? ch)
-             (prompt-delete-fwd!)
-             "edit")
-            ; Empty line (not browsing hist): arrows navigate the pet.
-            ((and empty? (not hist-browse?) (prompt-is-left? ch)) "nav-left")
-            ((and empty? (not hist-browse?) (prompt-is-right? ch)) "nav-right")
-            ((and empty? (not hist-browse?) (prompt-is-up? ch)) "nav-up")
-            ((and empty? (not hist-browse?) (prompt-is-down? ch)) "nav-down")
-            ((prompt-is-left? ch)
-             (prompt-move! -1)
-             "edit")
-            ((prompt-is-right? ch)
-             (prompt-move! 1)
-             "edit")
-            ((prompt-is-home? ch)
-             (prompt-to-start!)
-             "edit")
-            ((prompt-is-end? ch)
-             (prompt-to-end!)
-             "edit")
-            ((prompt-is-kill-end? ch)
-             (prompt-kill-to-end!)
-             "edit")
-            ((prompt-is-kill-line? ch)
-             (prompt-kill-line!)
-             "edit")
-            ((prompt-is-kill-word? ch)
-             (prompt-kill-word-back!)
-             (prompt-refresh-complete!)
-             "edit")
-            ((and (not *prompt-no-q-quit?*) empty? (or (string=? ch "q") (string=? ch "Q")))
-             "quit")
-            ((and empty? (prompt-is-hot? ch))
-             (set! *prompt-hot* (prompt-hot-cmd ch))
-             "hot")
-            ((prompt-printable? ch)
-             (prompt-insert! ch)
-             "edit")
-            (else #f)))))))
+        (let ((ch (cdr e)))
+          (if (prompt-normal?)
+              (prompt-handle-normal ch)
+            (prompt-handle-insert ch)))))))
 
 ; Draw string by full UTF-8 codepoints. CJK advances 2 columns so the next
 ; glyph does not land on the wide-tail cell (black-on-black wipe).
@@ -801,74 +884,98 @@
 ; Dim color for ghost completion (soft gray-cyan).
 (define *prompt-ghost-fg* 56754)
 
-; Grok Build–style bordered input box (3 rows at *prompt-y*..+2).
-; Status prefers live slash-hint when present (completion chrome).
-(define (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
+; NORMAL: one slim status line (no box) so the room feels larger.
+(define (prompt-draw-normal! log-fg bg)
   (let* ((y0 *prompt-y*)
          (y1 (+ y0 1))
          (y2 (+ y0 2))
-         (x0 0)
          (bw (if (< *prompt-width* 12) 12 *prompt-width*))
-         (x1 (+ x0 (- bw 1)))
-         (bfg *prompt-border*)
-         (bbg *prompt-fill*)
-         (inner-w (- bw 2))
-         (left (prompt-left-part))
-         (right (prompt-right-part))
-         (rlen (string-length right))
-         (cur-len (if (= rlen 0) 0 (prompt-cp-len right 0)))
-         (cur-ch (if (= rlen 0)
-                     " "
-                   (substring right 0 cur-len)))
-         (rest (if (<= rlen cur-len)
-                   (prompt-empty)
-                 (substring right cur-len rlen)))
-         (ghost *prompt-ghost*)
-         (gn (string-length ghost))
-         ; input starts after "│> "
-         (in-x (+ x0 3))
-         (in-max (- inner-w 3))
          (status
-           (if (> (string-length *prompt-hint*) 0)
-               *prompt-hint*
-             *prompt-log*))
-         (log-show (prompt-clip-cols status (- inner-w 2))))
-    ; ── top border with status / completion title ──
-    (tui:cell x0 y0 "┌" bfg bbg 0)
-    (prompt-hline! (+ x0 1) y0 inner-w "─" bfg bbg)
-    (tui:cell x1 y0 "┐" bfg bbg 0)
-    (prompt-put-str! (+ x0 2) y0 log-show log-fg bbg 0)
-    ; ── middle: input line ──
-    (tui:cell x0 y1 "│" bfg bbg 0)
-    (prompt-clear-run! (+ x0 1) y1 inner-w in-fg bbg)
-    (tui:cell x1 y1 "│" bfg bbg 0)
-    (prompt-put-str! (+ x0 1) y1 "> " in-fg bbg 1)
-    ; typed text + block cursor + optional ghost completion
-    (let* ((left-show (prompt-clip-cols left in-max))
-           (lc (prompt-cp-count left-show))
-           (cur-x (+ in-x lc)))
-      (prompt-put-str! in-x y1 left-show in-fg bbg 0)
-      (if (< cur-x x1)
-          (begin
-            (if *prompt-blink-on*
-                (tui:cell cur-x y1 cur-ch cursor-fg cursor-bg 1)
-              (tui:cell cur-x y1 " " cursor-fg *prompt-fill* 0))
-            ; Ghost: dim suffix of unique/common slash completion
-            (let ((after (+ cur-x 1)))
-              (if (and (> gn 0) (< after x1) (= rlen 0))
-                  (let ((gshow
-                          (prompt-clip-cols ghost (- x1 after))))
-                    (prompt-put-str! after y1 gshow
-                                    *prompt-ghost-fg* bbg 0)
-                    #t)
-                (if (< after x1)
-                    (prompt-put-str! after y1
-                                     (prompt-clip-cols rest (- x1 after))
-                                     in-fg bbg 0)
-                  #t))))
-        #t))
-    ; ── bottom border ──
-    (tui:cell x0 y2 "└" bfg bbg 0)
-    (prompt-hline! (+ x0 1) y2 inner-w "─" bfg bbg)
-    (tui:cell x1 y2 "┘" bfg bbg 0)
+           (if (> (string-length *prompt-log*) 0)
+               *prompt-log*
+             "NORMAL · i type · Esc stays · arrows move"))
+         (show (prompt-clip-cols status (- bw 2)))
+         (dim 56754))
+    ; Clear the 3 reserved rows (no box chrome).
+    (prompt-clear-run! 0 y0 bw log-fg bg)
+    (prompt-clear-run! 0 y1 bw log-fg bg)
+    (prompt-clear-run! 0 y2 bw log-fg bg)
+    ; Center-ish mode line on middle row
+    (prompt-put-str! 1 y1 "-- " dim bg 0)
+    (prompt-put-str! 4 y1 show log-fg bg 0)
     #t))
+
+; Grok Build–style bordered input box (3 rows at *prompt-y*..+2).
+; Status prefers live slash-hint when present (completion chrome).
+; NORMAL mode: slim bar only (no box).
+(define (prompt-draw! log-fg in-fg bg cursor-fg cursor-bg)
+  (if (prompt-normal?)
+      (prompt-draw-normal! log-fg bg)
+    (let* ((y0 *prompt-y*)
+           (y1 (+ y0 1))
+           (y2 (+ y0 2))
+           (x0 0)
+           (bw (if (< *prompt-width* 12) 12 *prompt-width*))
+           (x1 (+ x0 (- bw 1)))
+           (bfg *prompt-border*)
+           (bbg *prompt-fill*)
+           (inner-w (- bw 2))
+           (left (prompt-left-part))
+           (right (prompt-right-part))
+           (rlen (string-length right))
+           (cur-len (if (= rlen 0) 0 (prompt-cp-len right 0)))
+           (cur-ch (if (= rlen 0)
+                       " "
+                     (substring right 0 cur-len)))
+           (rest (if (<= rlen cur-len)
+                     (prompt-empty)
+                   (substring right cur-len rlen)))
+           (ghost *prompt-ghost*)
+           (gn (string-length ghost))
+           ; input starts after "│> "
+           (in-x (+ x0 3))
+           (in-max (- inner-w 3))
+           (status
+             (if (> (string-length *prompt-hint*) 0)
+                 *prompt-hint*
+               *prompt-log*))
+           (log-show (prompt-clip-cols status (- inner-w 2))))
+      ; ── top border with status / completion title ──
+      (tui:cell x0 y0 "┌" bfg bbg 0)
+      (prompt-hline! (+ x0 1) y0 inner-w "─" bfg bbg)
+      (tui:cell x1 y0 "┐" bfg bbg 0)
+      (prompt-put-str! (+ x0 2) y0 log-show log-fg bbg 0)
+      ; ── middle: input line ──
+      (tui:cell x0 y1 "│" bfg bbg 0)
+      (prompt-clear-run! (+ x0 1) y1 inner-w in-fg bbg)
+      (tui:cell x1 y1 "│" bfg bbg 0)
+      (prompt-put-str! (+ x0 1) y1 "> " in-fg bbg 1)
+      ; typed text + block cursor + optional ghost completion
+      (let* ((left-show (prompt-clip-cols left in-max))
+             (lc (prompt-cp-count left-show))
+             (cur-x (+ in-x lc)))
+        (prompt-put-str! in-x y1 left-show in-fg bbg 0)
+        (if (< cur-x x1)
+            (begin
+              (if *prompt-blink-on*
+                  (tui:cell cur-x y1 cur-ch cursor-fg cursor-bg 1)
+                (tui:cell cur-x y1 " " cursor-fg *prompt-fill* 0))
+              ; Ghost: dim suffix of unique/common slash completion
+              (let ((after (+ cur-x 1)))
+                (if (and (> gn 0) (< after x1) (= rlen 0))
+                    (let ((gshow
+                            (prompt-clip-cols ghost (- x1 after))))
+                      (prompt-put-str! after y1 gshow
+                                      *prompt-ghost-fg* bbg 0)
+                      #t)
+                  (if (< after x1)
+                      (prompt-put-str! after y1
+                                       (prompt-clip-cols rest (- x1 after))
+                                       in-fg bbg 0)
+                    #t))))
+          #t))
+      ; ── bottom border ──
+      (tui:cell x0 y2 "└" bfg bbg 0)
+      (prompt-hline! (+ x0 1) y2 inner-w "─" bfg bbg)
+      (tui:cell x1 y2 "┘" bfg bbg 0)
+      #t)))

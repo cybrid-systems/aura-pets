@@ -152,7 +152,7 @@
 (define (tut-page) *tut-page*)
 
 (define (tut-welcome-tip)
-  "Welcome! /tutorial = friendly guide · arrows · 1/2/3 care · C-d quit")
+  "Welcome! Esc play · i type · /tutorial guide · 1/2/3 care · C-d quit")
 
 (define (tut-welcome!)
   (game-set-speech! (tut-welcome-tip))

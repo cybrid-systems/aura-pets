@@ -32,6 +32,7 @@ care → happier pet → love up → evolve unlock → new look → keep caring
 | **eDSL brain** | `teach feed Hi` / `brain` / free NL | rule list mutated online + AST commit |
 | **Genome (Slice A)** | `/brain` `/diff` `/mutate` `/guide` | traits self-mutate; visible before→after |
 | **Tutorial** | `/tutorial` browse · `/n` `/b` · topic jump | Friendly interactive guide (cmds + how-to), not a forced quest |
+| **Prompt modes** | Esc NORMAL · i INSERT · : slash | vi-like; box hidden in NORMAL |
 | **Entity mutate** | `/npc` + NL `target:`/`set:`/`trait:` | query locate → patch data AST → diff |
 | **NL director** | free English in prompt | MiniMax → ops → world/eDSL + set-code |
 

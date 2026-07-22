@@ -537,9 +537,22 @@
              (plog "submit" (string-append "cmd=" cmd
                                            " keep=" (if (still-going? r) "1" "0")))
              (set! *p-pet* (cmd-pet r *p-pet*))
+             ; After command, mode is NORMAL (prompt hidden); keep toast in log.
+             (try
+               (if (prompt-normal?)
+                   (prompt-set-log!
+                     (string-append "NORMAL · "
+                                    (prompt-clip-cols (game-speech) 48)))
+                 #t)
+               (catch (e) #f))
              (if (still-going? r)
                  #t
                (play-stop! (string-append "submit-stop=" cmd)))))))
+      ((and (string? act) (string=? act "mode"))
+       ; Esc / i / : — refresh status from prompt-log
+       (try (prompt-set-log! (prompt-log)) (catch (e) #f))
+       (plog "mode" (try (prompt-mode) (catch (e) "?")))
+       #t)
       (else #t))))
 ; Apply finished async NL / worldgen without blocking the move loop.
 (define (play-poll-async!)
@@ -602,6 +615,8 @@
   (prompt-set-width! W)
   ; Quit: Ctrl+D (empty line) or double Ctrl+C — not bare "q".
   (prompt-set-no-q-quit! #t)
+  ; Start in NORMAL (game-first); press i to open INSERT prompt box.
+  (try (prompt-enter-normal!) (catch (e) #f))
   (game-reset!)
   (morph-reset!)
   (set! *p-pet* (pet-make "mochi" "cat" "/tmp/brain" "cat-idle"))
