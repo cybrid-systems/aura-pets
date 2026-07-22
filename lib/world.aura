@@ -423,25 +423,11 @@
 (define (world-reset!)
   (set! *world-theme* "Sunset Meadow")
   (world-set-bg-style! "sunset")
-  ; Small cast — readable + safe on large terminals (bg fill is the heavy cost).
-  ; NPC records are 6-field (name x y kind speech sprite); default sprite = #f
-  ; so the hardcoded creature pattern is used.
-  (set! *world-npcs*
-    (list
-      (list "Bunny" 12 8 "friend" "Hi! Want to play?" #f)
-      (list "Bird" 28 6 "friend" "Chirp! Nice day!" #f)
-      (list "Frog" 40 11 "friend" "Ribbit~" #f)
-      (list "Fox" 18 10 "friend" "Sly hi!" #f)
-      (list "Owl" 50 7 "friend" "Hoo there!" #f)
-      (list "Pip" 35 9 "decor" "Spark!" #f)))
-  ; Prop records are 4-field (kind x y sprite); default sprite = #f.
-  (set! *world-props*
-    (list
-      (list "tree" 22 13 #f) (list "tree" 45 13 #f)
-      (list "flower" 15 14 #f) (list "flower" 30 14 #f)
-      (list "crate" 25 12 #f) (list "wall" 10 11 #f)
-      (list "bush" 38 13 #f) (list "rock" 52 13 #f)
-      (list "crate" 48 12 #f) (list "bush" 8 12 #f)))
+  ; Empty cast — the player's pet cat (mochi) is always drawn separately
+  ; by draw-pixel-cat!, so the initial world is just a clean bg + the pet.
+  ; NPCs/props appear when the player describes them (LLM) or via /world regen.
+  (set! *world-npcs* '())
+  (set! *world-props* '())
   (set! *w-sky* (world-rgb 40 30 90))
   (set! *w-sky2* (world-rgb 90 50 70))
   (set! *w-floor* (world-rgb 55 110 65))

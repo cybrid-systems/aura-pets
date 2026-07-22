@@ -16,51 +16,24 @@
     "sky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
     "npc:<Name>|<x>|<y>|<friend|decor>|<speech>\n"
     "prop:<tree|flower|rock|crate|wall|bush>|<x>|<y>\n"
-    "Rules: 4-6 npc (max 6), 6-10 prop (max 12). ASCII names. "
-    "bg cyber = neon grid + matrix rain (cyber cat). "
-    "x in [2,COLS-4], y in [4,ROWS-7]. Kid-safe."))
+    "Rules: Start with an EMPTY scene (theme + bg colors only, NO npc/prop). "
+    "Only emit npc: or prop: lines when the player EXPLICITLY describes a "
+    "specific entity (e.g. 'add a bunny', 'put a tree here'). The player's "
+    "pet cat is always drawn separately — never emit it as an npc. "
+    "If the player says 'make it busy / crowded / full park', then 4-6 npc "
+    "+ 6-10 prop is fine. ASCII names. x in [2,COLS-4], y in [4,ROWS-7]. "
+    "Kid-safe. bg cyber = neon grid + matrix rain (cyber cat)."))
 
+; Empty default scene — just bg/theme palette, no NPCs or props.
+; The player's pet cat (mochi) is drawn separately by draw-pixel-cat!, so
+; "just a cat" = clean meadow + the pet sprite. NPCs/props appear only when
+; the player explicitly describes them (LLM path) or via /world regen.
 (define (worldgen-offline cols rows)
-  (let* ((floor-y (if (< (- rows 6) 8) 8 (- rows 6)))
-         (names
-           (list
-             (list "Bunny" "friend" "Hi! Want to play?")
-             (list "Bird" "friend" "Chirp! Nice day!")
-             (list "Frog" "friend" "Ribbit~")
-             (list "Fox" "friend" "Sly hi!")
-             (list "Owl" "friend" "Hoo there!")
-             (list "Pip" "decor" "Spark!")))
-         (props
-           (list "tree" "tree" "flower" "flower" "crate" "wall"
-                 "bush" "rock" "crate" "bush"))
-         (x-span (if (< (- cols 8) 8) 8 (- cols 8)))
-         (y-span (if (< (- floor-y 6) 4) 4 (- floor-y 6)))
-         (s0 (string-append
-               "theme:Sunset Meadow\n"
-               "bg:sunset\n"
-               "sky:40,30,90\nsky2:90,50,70\n"
-               "floor:55,110,65\nfloor2:40,90,50\nstar:255,220,160\n")))
-    (let loop ((xs names) (i 0) (acc s0))
-      (if (null? xs)
-          (let loop2 ((ps props) (j 0) (acc2 acc))
-            (if (null? ps)
-                acc2
-              (let ((x (+ 3 (modulo (* j 7) (if (< (- cols 6) 6) 6 (- cols 6)))))
-                    (y (if (< (- floor-y (modulo j 4)) 5)
-                           5
-                         (- floor-y (modulo j 4)))))
-                (loop2 (cdr ps) (+ j 1)
-                       (string-append acc2 "prop:" (car ps) "|"
-                                      (number->string x) "|"
-                                      (number->string y) "\n")))))
-        (let* ((n (car xs))
-               (x (+ 4 (modulo (* i 5) x-span)))
-               (y (+ 5 (modulo (* i 3) y-span))))
-          (loop (cdr xs) (+ i 1)
-                (string-append acc
-                  "npc:" (car n) "|" (number->string x) "|"
-                  (number->string y) "|" (car (cdr n)) "|"
-                  (car (cdr (cdr n))) "\n")))))))
+  (string-append
+    "theme:Sunset Meadow\n"
+    "bg:sunset\n"
+    "sky:40,30,90\nsky2:90,50,70\n"
+    "floor:55,110,65\nfloor2:40,90,50\nstar:255,220,160\n"))
 
 ; Light keep: only lines that look like world format; drop rest.
 (define (worldgen-keep-line? line)
@@ -131,7 +104,9 @@
   (let* ((user (string-append
                  "Terminal size COLS=" (number->string cols)
                  " ROWS=" (number->string rows) ". "
-                 "Create a cheerful park with about 5 animal NPCs and 8 cover props."))
+                 "Start with an EMPTY scene (theme + bg colors only). "
+                 "The player's pet cat is already drawn separately — never emit it. "
+                 "Only emit npc:/prop: lines if the player described specific entities."))
          (raw (llm-chat *wg-system* user)))
     (if (not raw)
         #f
