@@ -45,8 +45,12 @@
         (edge-x0 (fill-box 0 0 0 1 0 9 CCS-C-PLAT-EDGE))
         (edge-x1 (fill-box 9 9 0 1 0 9 CCS-C-PLAT-EDGE))
         (edge-z0 (fill-box 0 9 0 1 0 0 CCS-C-PLAT-EDGE))
-        (edge-z1 (fill-box 0 9 0 1 9 9 CCS-C-PLAT-EDGE)))
-    (append base edge-x0 edge-x1 edge-z0 edge-z1)))
+        (edge-z1 (fill-box 0 9 0 1 9 9 CCS-C-PLAT-EDGE))
+        (lights (list (vx 2 1 2 CCS-C-PLAT-EDGE)
+                     (vx 5 1 5 CCS-C-PLAT-EDGE)
+                     (vx 7 1 7 CCS-C-PLAT-EDGE)
+                     (vx 4 1 8 CCS-C-PLAT-EDGE))))
+    (append base edge-x0 edge-x1 edge-z0 edge-z1 lights)))
 
 ; ─── Cat — static body parts ───
 ; Sitting cat facing +x (right). Layered box geometry; the "magic" lives in
