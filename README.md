@@ -65,7 +65,7 @@ Default `./run.sh play` starts **new** with a short tip: type **`/tutorial`** fo
 | Mode | Feel |
 |------|------|
 | **NORMAL** (default) | Prompt **hidden** — arrows move; **1 2 3** care; **Space** fire |
-| **INSERT** | Prompt **box** — pure typing (1/2/3/Space are characters, not hotkeys) |
+| **INSERT** | Prompt **box** — pure typing; arrows = cursor/history only |
 
 | Key | Action |
 |-----|--------|
@@ -74,9 +74,11 @@ Default `./run.sh play` starts **new** with a short tip: type **`/tutorial`** fo
 | **:** | → INSERT with leading `/` (command-ready) |
 | **Enter** | Submit command; **stay INSERT** (Esc → NORMAL) |
 | **Tab** | Slash complete (`/br` → `/brain `); cycle matches |
-| **↑ / ↓** | History when line non-empty or starts with `/` |
-| **C-p / C-n** | History always (empty line still OK) |
-| Empty **↑↓←→** (INSERT) | Move pet |
+| **← / →** (INSERT) | Move caret (never move pet) |
+| **↑ / ↓** (INSERT) | Command history |
+| **C-p / C-n** | History (INSERT) |
+| **←↑↓→** (NORMAL) | Move pet |
+| **1 2 3 / Space** (NORMAL only) | Care / fire |
 | Status line | Live completion hints (`Tab → /brain`) |
 | Ghost text | Dim suffix after cursor for unique match |
 

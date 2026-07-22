@@ -6,8 +6,7 @@
 ;   - real cursor index (not just trailing _)
 ;   - Mac/PC Backspace: code 127 (DEL) and 8 (BS)
 ;   - Emacs-style line editing in INSERT (C-a/e/b/f/k/u/w, Home/End)
-;   - Prompt history: Up/Down when non-empty; C-p / C-n always
-;     (empty-line arrows still move the pet — game feel)
+;   - Prompt history (INSERT): Up/Down and C-p/C-n always
 ;   - Slash autocomplete: type /… then Tab; status shows matches
 ;   - Ghost completion after caret when unique / prefix match
 ;   - UTF-8 codepoint-aware cursor
@@ -740,12 +739,10 @@
     (else #f)))
 
 ; INSERT mode: pure line editor + Esc → NORMAL.
-; 1/2/3/Space type as characters (no care/fire hotkeys).
+; 1/2/3/Space type as characters; arrows never move the pet
+; (←→ cursor, ↑↓ / C-p C-n history). Pet move is NORMAL only.
 (define (prompt-handle-insert ch)
-  (let ((empty? (= (string-length *prompt-buf*) 0))
-        (slash? (and (> (string-length *prompt-buf*) 0)
-                     (string=? (substring *prompt-buf* 0 1) "/")))
-        (hist-browse? (>= *prompt-hist-idx* 0)))
+  (let ((empty? (= (string-length *prompt-buf*) 0)))
     (cond
       ((prompt-is-esc? ch)
        (prompt-enter-normal!)
@@ -762,13 +759,11 @@
        "submit")
       ((prompt-is-tab? ch)
        (if (prompt-tab-complete!) "edit" #f))
-      ((or (prompt-is-hist-up? ch)
-           (and (prompt-is-up? ch)
-                (or (not empty?) hist-browse? slash?)))
+      ; ↑ / C-p always history in INSERT (even empty line)
+      ((or (prompt-is-hist-up? ch) (prompt-is-up? ch))
        (if (prompt-hist-up!) "edit" #f))
-      ((or (prompt-is-hist-down? ch)
-           (and (prompt-is-down? ch)
-                (or (not empty?) hist-browse? slash?)))
+      ; ↓ / C-n always history in INSERT
+      ((or (prompt-is-hist-down? ch) (prompt-is-down? ch))
        (if (prompt-hist-down!) "edit" #f))
       ((prompt-is-bs? ch)
        (prompt-backspace!)
@@ -778,11 +773,7 @@
       ((prompt-is-del-fwd? ch)
        (prompt-delete-fwd!)
        "edit")
-      ; Empty INSERT: arrows still move pet (game feel while typing idle)
-      ((and empty? (not hist-browse?) (prompt-is-left? ch)) "nav-left")
-      ((and empty? (not hist-browse?) (prompt-is-right? ch)) "nav-right")
-      ((and empty? (not hist-browse?) (prompt-is-up? ch)) "nav-up")
-      ((and empty? (not hist-browse?) (prompt-is-down? ch)) "nav-down")
+      ; ←→ always move caret (never pet)
       ((prompt-is-left? ch)
        (prompt-move! -1)
        "edit")
