@@ -58,15 +58,39 @@
 ; is also more predictable for layered scenes.
 (define (vr-sort voxels) voxels)
 
+; Clamp x to [0, 255] — integer-only, no truncate/float intermediates.
+(define (vr-clamp255 x)
+  (cond ((> x 255) 255) ((< x 0) 0) (else x)))
+
+; Shading: brighten voxels at higher y (top-lit), dim voxels at higher
+; z (atmospheric perspective). Returns a (r g b) triple with adjustments.
+; Integer math throughout (no truncate/float intermediates) — quotient for
+; div-by-100 percentage. Brightness 60–160, fog 45–100 → final k 27–160.
+(define (vr-shade r g b y z)
+  (let* ((brightness (+ 60 (* 10 y)))   ; y=0 → 60, y=10 → 160
+         (fog (cond ((< z 12) 100)
+                   ((< z 18) 85)
+                   ((< z 24) 65)
+                   (else 45)))
+         (k (quotient (* brightness fog) 100)))
+    (list (vr-clamp255 (quotient (* r k) 100))
+          (vr-clamp255 (quotient (* g k) 100))
+          (vr-clamp255 (quotient (* b k) 100)))))
+
 ; Draw one voxel as a full-block character with the voxel's color.
-; Skip if outside screen bounds.
+; Skip if outside screen bounds. Applies y-based brightness + z-based fog
+; so the iso-projected scene has visible depth (top brighter, far dimmer).
 (define (vr-draw-voxel! v)
   (let* ((x (car v))
          (y (car (cdr v)))
          (z (car (cdr (cdr v))))
-         (r (car (cdr (cdr (cdr v)))))
-         (g (car (cdr (cdr (cdr (cdr v))))))
-         (b (car (cdr (cdr (cdr (cdr (cdr v)))))))
+         (r0 (car (cdr (cdr (cdr v)))))
+         (g0 (car (cdr (cdr (cdr (cdr v))))))
+         (b0 (car (cdr (cdr (cdr (cdr (cdr v)))))))
+         (shaded (vr-shade r0 g0 b0 y z))
+         (r (car shaded))
+         (g (car (cdr shaded)))
+         (b (car (cdr (cdr shaded))))
          (p (vr-proj x y z))
          (sx (car p))
          (sy (cdr p))
