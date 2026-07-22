@@ -37,7 +37,11 @@ MODE="auto"
 # before pet-combat.aura + pet-battle.aura (both reference *world-npcs* /
 # *world-theme*). pet-lifecycle.aura owns the stdlib requires (atomic-swap +
 # tui/canvas) so draw-text is bound globally before any consumer loads.
-LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\")"
+#
+# tui-prompt MUST load before cat-demo / cyber-cat-stage: play-handle-event!
+# and live-dispatch close over prompt-handle at load time. Loading prompt
+# after the example left every key act=nil (events arrived, handler unbound).
+LOAD_CORE="(load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/lib/world.aura\") (load \"$SCRIPT_DIR/lib/pet-edsl.aura\") (load \"$SCRIPT_DIR/lib/pet-anim.aura\") (load \"$SCRIPT_DIR/lib/pet-game.aura\") (load \"$SCRIPT_DIR/lib/pet-combat.aura\") (load \"$SCRIPT_DIR/lib/pet-battle.aura\") (load \"$SCRIPT_DIR/lib/pet-cmd.aura\") (load \"$SCRIPT_DIR/lib/pet-log.aura\") (load \"$SCRIPT_DIR/lib/llm-client.aura\") (load \"$SCRIPT_DIR/lib/worldgen-engine.aura\") (load \"$SCRIPT_DIR/lib/nl-engine.aura\") (load \"$SCRIPT_DIR/lib/aura-jobs.aura\") (load \"$SCRIPT_DIR/lib/nl-cmd.aura\") (load \"$SCRIPT_DIR/lib/pixel-cat.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
 LOG_FILE="${AURA_PETS_LOG:-/tmp/aura-pets-debug.log}"
 export AURA_PETS_ROOT="$SCRIPT_DIR"
 
@@ -108,14 +112,15 @@ export AURA_PETS_LOG="$LOG_FILE"
 case "$MODE" in
   play)
     # plog-start! uses fixed default; override path before entry
-    EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (plog-set-path! \"$LOG_FILE\") (play-entry))"
+    # tui-prompt already in LOAD_CORE (before EXAMPLE).
+    EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (plog-set-path! \"$LOG_FILE\") (play-entry))"
     export AURA_TUI_LIVE=1
     ;;
   smoke)
     EXPR="(begin (load \"$SCRIPT_DIR/lib/pet-lifecycle.aura\") (load \"$SCRIPT_DIR/$EXAMPLE\") (smoke-entry))"
     ;;
   demo)
-    EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (cat-demo-anim $FRAMES))"
+    EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (cat-demo-anim $FRAMES))"
     ;;
   cyber)
     # 3D voxel scene — voxel-render + cyber-cat-scene + entry.
@@ -131,9 +136,8 @@ case "$MODE" in
     ;;
   cyber-live)
     # Interactive cyber cat stage — real event loop with the Grok Build–
-    # style prompt (blinking block cursor, Ctrl+D-only quit). tui-prompt
-    # is loaded here so --cyber-live gets a real input area; the static
-    # "Keys: …" text from the previous headless-style render is gone.
+    # style prompt (blinking block cursor, Ctrl+D-only quit).
+    # tui-prompt before EXAMPLE so live-dispatch sees prompt-handle.
     EXAMPLE="examples/cyber-cat-stage.aura"
     LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\")"
     EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-live))"
