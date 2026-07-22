@@ -72,7 +72,10 @@
          (sy (cdr p))
          (color (vr-rgb r g b)))
     (if (and (>= sx 0) (< sx *vr-w*) (>= sy 0) (< sy *vr-h*))
-        (tui:cell sx sy "█" color 0)
+        (begin
+          (tui:cell sx sy "█" color 0)
+          ; Also track in ASCII buffer for clean demo output (no ANSI escapes).
+          (vr-ascii-set! sx sy "█"))
       #t)))
 
 ; Render scene: sort + draw all voxels in order.
@@ -92,3 +95,55 @@
 ; Public helper: world-to-screen projection for HUD/debug overlay.
 (define (vr-world-to-screen x y z)
   (vr-proj x y z))
+
+; ─── Parallel ASCII buffer ───
+; Maintains (col row char) for each cell drawn, so demos can dump a clean
+; ASCII grid (no CSI escapes) instead of going through tui:frame-ansi which
+; uses cursor-position jumps that blow Aura's 700-frame recursion limit when
+; stripped byte-by-byte.
+;
+; Buffer layout: list of (col . row . char) entries. Initially empty after
+; vr-ascii-clear!. Lookup replaces if same (col,row) already present.
+(define *vr-ascii* '())
+
+(define (vr-ascii-clear!)
+  (set! *vr-ascii* '())
+  #t)
+
+(define (vr-ascii-set! col row ch)
+  ; Replace existing entry at (col,row) or cons a new one.
+  (let ((existing (let loop ((xs *vr-ascii*) (acc '()))
+                   (cond ((null? xs) #f)
+                         ((and (= (car (car xs)) col)
+                               (= (car (cdr (car xs))) row))
+                          (cons (car xs) (loop (cdr xs) acc)))
+                         (else (loop (cdr xs) (cons (car xs) acc)))))))
+    (if existing
+        (set! *vr-ascii*
+          (append (cdr existing)
+                  (list (cons col (cons row ch)))))
+        (set! *vr-ascii* (cons (cons col (cons row ch)) *vr-ascii*)))
+    #t))
+
+; Dump ASCII buffer as a clean string (no ANSI escapes). Direct 2D grid scan:
+; for each row, walk col 0..W-1 and look up the char at (col, row). Empty cells
+; render as space. O(W*H) lookup cost per dump — fine for 80×24 demos.
+(define (vr-ascii-dump!)
+  (let ((w *vr-w*)
+        (h *vr-h*))
+    (let loop-r ((row 0) (acc '()))
+      (if (>= row h)
+          (apply string-append (reverse acc))
+        (let loop-c ((col 0) (line-acc '()))
+          (if (>= col w)
+              (loop-r (+ row 1)
+                       (cons (apply string-append
+                                     (reverse (cons "\n" line-acc)))
+                             acc))
+            (let ((ch (let lookup ((xs *vr-ascii*))
+                        (cond ((null? xs) " ")
+                              ((and (= (car (car xs)) col)
+                                    (= (car (cdr (car xs))) row))
+                               (cdr (cdr (car xs))))
+                              (else (lookup (cdr xs)))))))
+              (loop-c (+ col 1) (cons ch line-acc)))))))))
