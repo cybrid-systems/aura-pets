@@ -9,8 +9,10 @@
     "You are the live director of a kids terminal pet game (Aura eDSL).\n"
     "Convert player text into ONLY plain apply-lines (no markdown):\n"
     "say:<reply max 40>\ntheme:<name>\n"
-    "bg:<meadow|cyber|matrix|stars|city|ocean|grid|sunset>\n"
+    "bg:<meadow|cyber|matrix|stars|city|ocean|grid|sunset|recipe>\n"
     "sky:r,g,b\nsky2:r,g,b\nfloor:r,g,b\nfloor2:r,g,b\nstar:r,g,b\n"
+    "accent:r,g,b\nrain:<1-24>\n"
+    "layers:<rain,N|dots,step|petals,step|stars|waves|skyline|grid,sx,sy>|...\n"
     "npc_clear:\nnpc:<Name>|<x>|<y>|<friend|decor>|<speech>[|<sprite-name>]\n"
     "prop_clear:\nprop:<tree|flower|rock|crate|wall|bush>|<x>|<y>[|<sprite-name>]\n"
     "sprite:<name>|<w>|<h>|<r>,<g>,<b>|<r>,<g>,<b>|...   (define a custom sprite, max 16x12)\n"
@@ -29,9 +31,15 @@
     "  say:Bunny evolved!\n  target:npc:Bunny\n  snapshot:\n"
     "  set:hp|20\n  trait:fierce|3\n  ai:hunter\n"
     "  teach_npc:on-hit|Don't touch me!\n  diff:\n"
-    "Background: cyber/matrix = neon grid + matrix rain (cyber cat).\n"
-    "stars=night, ocean=beach, city=skyline, sunset=warm sky, meadow=park.\n"
-    "When user asks for cyber/neon/matrix/赛博, emit bg:cyber + dark sky colors.\n"
+    "Background recipe: palette colors always apply; layers are sparse FX.\n"
+    "Presets: cyber=rain+grid, stars=night, ocean=waves, city=skyline,\n"
+    "sunset/meadow=dots. Prefer custom accent+layers for unique looks.\n"
+    "Example pink cyber rain:\n"
+    "  bg:cyber\n  accent:255,100,180\n  rain:16\n"
+    "  layers:grid,12,6|rain,16|petals,3\n"
+    "  sky:0,8,18\n  floor:10,12,28\n"
+    "When user asks for cyber/neon/matrix/赛博, emit bg:cyber + accent.\n"
+    "Snow → layers:petals,2 + cold palette. Cherry → accent pink + petals.\n"
     "Prefer 4-6 npcs and 6-10 props (max 6 npcs / 12 props). "
     "Kid-safe. ASCII names. x in [2,COLS-4] y in [4,ROWS-7].\n"
     "To make a custom creature (dragon/robot/blob/whatever), first emit "
@@ -63,9 +71,11 @@
                     (nl-has? t "赛博") (nl-has? t "矩阵")
                     (nl-has? t "rain") (nl-has? t "黑客")))
          (city (or (nl-has? t "city") (nl-has? t "城") (nl-has? t "urban")))
+         (cherry (or (nl-has? t "cherry") (nl-has? t "sakura") (nl-has? t "pink")
+                     (nl-has? t "樱") (nl-has? t "花瓣") (nl-has? t "petal")))
          (bg-only (or (nl-has? t "bg") (nl-has? t "background")
                       (nl-has? t "背景") (nl-has? t "/bg")))
-         (want-world (or snow beach night cyber city
+         (want-world (or snow beach night cyber city cherry
                          (nl-has? t "world") (nl-has? t "park")
                          (nl-has? t "scene") (nl-has? t "npc")
                          (nl-has? t "背景") (nl-has? t "公园")
@@ -78,8 +88,30 @@
           "teach:feed|Yum!\n"
           "aura:commit\n")
       ; Background-only prompts: switch style + palette without full regen
-      (if (and bg-only (or cyber night beach city snow) (not (nl-has? t "npc")))
+      (if (and bg-only (or cyber night beach city snow cherry)
+               (not (nl-has? t "npc")))
           (cond
+            ((and cyber cherry)
+             (string-append
+               "say:Pink cyber rain!\n"
+               "theme:Cherry Cyber Alley\n"
+               "bg:cyber\n"
+               "sky:12,4,28\nsky2:40,10,50\n"
+               "floor:20,10,30\nfloor2:10,5,18\n"
+               "star:255,140,200\n"
+               "accent:255,100,180\n"
+               "rain:18\n"
+               "layers:grid,12,6|rain,18|petals,2\n"))
+            (cherry
+             (string-append
+               "say:Cherry petals!\n"
+               "theme:Sakura Path\n"
+               "bg:meadow\n"
+               "sky:255,200,220\nsky2:255,230,240\n"
+               "floor:80,140,90\nfloor2:50,100,60\n"
+               "star:255,180,200\n"
+               "accent:255,120,170\n"
+               "layers:petals,2|dots,4|stars\n"))
             (cyber
              (string-append
                "say:Cyber rain ON!\n"
@@ -87,7 +119,10 @@
                "bg:cyber\n"
                "sky:0,8,18\nsky2:0,20,35\n"
                "floor:10,15,30\nfloor2:5,10,20\n"
-               "star:0,255,120\n"))
+               "star:0,255,120\n"
+               "accent:0,255,160\n"
+               "rain:16\n"
+               "layers:grid,12,6|rain,16\n"))
             (night
              (string-append
                "say:Starry night!\n"
@@ -95,7 +130,9 @@
                "bg:stars\n"
                "sky:4,6,24\nsky2:12,10,40\n"
                "floor:18,20,40\nfloor2:10,12,28\n"
-               "star:230,235,255\n"))
+               "star:230,235,255\n"
+               "accent:200,210,255\n"
+               "layers:stars\n"))
             (beach
              (string-append
                "say:Ocean waves!\n"
@@ -103,7 +140,9 @@
                "bg:ocean\n"
                "sky:80,160,230\nsky2:180,220,255\n"
                "floor:200,180,120\nfloor2:170,150,100\n"
-               "star:255,255,200\n"))
+               "star:255,255,200\n"
+               "accent:40,140,220\n"
+               "layers:waves|stars\n"))
             (city
              (string-append
                "say:City lights!\n"
@@ -111,7 +150,9 @@
                "bg:city\n"
                "sky:20,25,50\nsky2:60,40,70\n"
                "floor:30,30,40\nfloor2:20,20,28\n"
-               "star:255,220,80\n"))
+               "star:255,220,80\n"
+               "accent:255,200,60\n"
+               "layers:skyline|stars\n"))
             (else
              (string-append
                "say:Snow soft!\n"
@@ -119,7 +160,9 @@
                "bg:meadow\n"
                "sky:180,200,230\nsky2:220,230,245\n"
                "floor:240,245,255\nfloor2:200,210,230\n"
-               "star:255,255,255\n")))
+               "star:255,255,255\n"
+               "accent:255,255,255\n"
+               "layers:petals,2|stars\n")))
         (if want-world
             (string-append
               (cond
@@ -130,12 +173,30 @@
                    "bg:cyber\n"
                    "sky:0,8,18\nsky2:0,20,35\n"
                    "floor:10,15,30\nfloor2:5,10,20\n"
-                   "star:0,255,120\n"))
-                (snow "say:Snow day!\ntheme:Snowy Meadow\nbg:meadow\n")
-                (beach "say:Beach day!\ntheme:Sunny Beach\nbg:ocean\n")
-                (night "say:Night park!\ntheme:Starry Park\nbg:stars\n")
-                (city "say:City walk!\ntheme:Neon City\nbg:city\n")
-                (else "say:New park ready!\ntheme:Sunset Meadow\nbg:sunset\n"))
+                   "star:0,255,120\n"
+                   "accent:0,255,160\n"
+                   "layers:grid,12,6|rain,14\n"))
+                (snow
+                 (string-append
+                   "say:Snow day!\ntheme:Snowy Meadow\nbg:meadow\n"
+                   "sky:180,200,230\nfloor:240,245,255\n"
+                   "accent:255,255,255\nlayers:petals,2|stars\n"))
+                (beach
+                 (string-append
+                   "say:Beach day!\ntheme:Sunny Beach\nbg:ocean\n"
+                   "accent:40,140,220\nlayers:waves|stars\n"))
+                (night
+                 (string-append
+                   "say:Night park!\ntheme:Starry Park\nbg:stars\n"
+                   "accent:200,210,255\nlayers:stars\n"))
+                (city
+                 (string-append
+                   "say:City walk!\ntheme:Neon City\nbg:city\n"
+                   "accent:255,200,60\nlayers:skyline|stars\n"))
+                (else
+                 (string-append
+                   "say:New park ready!\ntheme:Sunset Meadow\nbg:sunset\n"
+                   "accent:255,160,120\nlayers:stars|dots,3\n")))
               (worldgen-offline cols rows))
           (string-append
             "say:Try cyber rain / starry night / /bg cyber\n"

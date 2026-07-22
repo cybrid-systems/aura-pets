@@ -47,7 +47,7 @@
     ((= i 4)
      "Fight: Space fire · /weapon shot|beam · /fight melee · /heal · /grow unlocks stronger guns")
     ((= i 5)
-     "World: /npc Bunny · /npc @near set hp 20 · /talk · free text e.g. snowy park · /bg cyber")
+     "World: /bg cyber · /bg layers rain,16|petals · /bg accent 255,100,160 · free text scene")
     ((= i 6)
      "Life: /save keep · /load resume · /new fresh · quit auto-saves · --continue on start")
     (else

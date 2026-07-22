@@ -2,20 +2,27 @@
 ;
 ; World file format:
 ;   theme:Name
-;   bg:meadow|cyber|matrix|stars|city|ocean|grid|sunset
-;   sky:r,g,b  sky2: floor: floor2: star:
+;   bg:meadow|cyber|matrix|stars|city|ocean|grid|sunset|recipe
+;   sky:r,g,b  sky2: floor: floor2: star: accent:
+;   rain:N   (matrix rain drop count)
+;   layers:rain,12|dots,3|stars|waves|skyline|grid,8,4|petals,2
 ;   npc:Name|x|y|kind|speech
 ;   prop:tree|x|y
+;
+; Background model (Slice A+B):
+;   palette colors always drive fill; layers list is a sparse recipe
+;   the local drawer interprets every frame (LLM never paints cells).
 ;
 ; API:
 ;   (world-reset!) (world-load! path) (world-generate! cols rows)
 ;   (world-draw-bg! w h y0 y1 frame) (world-draw-npcs! frame)
 ;   (world-theme) (world-bg-style) (world-set-bg-style! s)
+;   (world-set-layers-str! s) (world-recipe-summary)
 ;   (world-npc-count) (world-nearest-speech x y)
 
 (define *world-theme* "Meadow")
 ; Patterned backgrounds (not hard sky/floor stripes):
-;   meadow sunset ocean stars city grid cyber matrix
+;   meadow sunset ocean stars city grid cyber matrix recipe
 (define *bg-style* "meadow")
 (define *world-npcs* '())
 (define *world-props* '())
@@ -26,11 +33,20 @@
 (define *w-floor* 3635269)
 (define *w-floor2* 2654258)
 (define *w-star* 15132415)
+(define *w-accent* 16742590)  ; neon pink default highlight
 (define *world-path* "/tmp/aura-pets-world.txt")
 (define *world-ok* #f)
 ; Cyber/matrix rain: list of (x y speed seed)
 (define *bg-rain* '())
 (define *bg-rain-ready* #f)
+; Recipe params (Slice A)
+(define *bg-rain-n* 12)
+(define *bg-dot-step* 3)
+(define *bg-grid-x* 12)
+(define *bg-grid-y* 6)
+; Layer list: each entry is (kind . args-list-of-strings) e.g. ("rain" "12")
+; Empty → rebuild from style defaults on next set-style.
+(define *bg-layers* '())
 
 (define (world-empty) (substring "x" 0 0))
 
@@ -39,10 +55,148 @@
 (define (world-npc-count) (length *world-npcs*))
 (define (world-ok?) *world-ok*)
 (define (world-path) *world-path*)
+(define (world-accent) *w-accent*)
+(define (world-layers) *bg-layers*)
 
 (define (world-set-path! p)
   (set! *world-path* p)
   #t)
+
+(define (world-set-accent! c)
+  (if (number? c) (set! *w-accent* c) #t)
+  #t)
+
+(define (world-set-rain-n! n)
+  (let ((v (if (and (number? n) (> n 0)) n 12)))
+    (if (> v 24) (set! *bg-rain-n* 24) (set! *bg-rain-n* v))
+    (set! *bg-rain-ready* #f)
+    #t))
+
+(define (world-set-dot-step! n)
+  (let ((v (if (and (number? n) (> n 0)) n 3)))
+    (if (> v 8) (set! *bg-dot-step* 8) (set! *bg-dot-step* v))
+    #t))
+
+; Clamp int from string, default d.
+(define (world-num-or s d)
+  (let ((v (try (string->number s) (catch (e) #f))))
+    (if (number? v) v d)))
+
+; Default sparse layers for a named preset (Slice B recipes-as-data).
+(define (world-default-layers-for style)
+  (cond
+    ((or (string=? style "cyber") (string=? style "matrix"))
+     (list (list "grid" (number->string *bg-grid-x*) (number->string *bg-grid-y*))
+           (list "rain" (number->string *bg-rain-n*))))
+    ((string=? style "grid")
+     (list (list "grid" "8" "4")))
+    ((string=? style "stars")
+     (list (list "stars")))
+    ((string=? style "ocean")
+     (list (list "waves")))
+    ((string=? style "city")
+     (list (list "skyline") (list "stars")))
+    ((string=? style "sunset")
+     (list (list "stars") (list "dots" (number->string *bg-dot-step*))))
+    ((string=? style "meadow")
+     (list (list "dots" (number->string *bg-dot-step*))))
+    (else
+     (list (list "dots" "3")))))
+
+(define (world-load-default-layers!)
+  (set! *bg-layers* (world-default-layers-for *bg-style*))
+  (set! *bg-rain-ready* #f)
+  #t)
+
+; Parse "rain,12|dots,3|stars|grid,8,4|petals,2" → layer list.
+(define (world-parse-layers-str s)
+  (let ((n (string-length s)))
+    (if (= n 0)
+        '()
+      (let loop ((i 0) (start 0) (acc '()))
+        (if (>= i n)
+            (let ((chunk (if (>= start n) "" (substring s start n))))
+              (if (= (string-length chunk) 0)
+                  (reverse acc)
+                (reverse (cons (world-parse-layer-chunk chunk) acc))))
+          (if (string=? (substring s i (+ i 1)) "|")
+              (let ((chunk (substring s start i)))
+                (loop (+ i 1) (+ i 1)
+                      (if (= (string-length chunk) 0)
+                          acc
+                        (cons (world-parse-layer-chunk chunk) acc))))
+            (loop (+ i 1) start acc)))))))
+
+; "rain,12" or "stars" → ("rain" "12") / ("stars")
+(define (world-parse-layer-chunk chunk)
+  (let ((n (string-length chunk)))
+    (let loop ((i 0) (start 0) (parts '()))
+      (if (>= i n)
+          (let ((last (if (>= start n) "" (substring chunk start n))))
+            (if (= (string-length last) 0)
+                (reverse parts)
+              (reverse (cons last parts))))
+        (if (string=? (substring chunk i (+ i 1)) ",")
+            (begin
+              (loop (+ i 1) (+ i 1)
+                    (cons (substring chunk start i) parts)))
+          (loop (+ i 1) start parts))))))
+
+(define (world-set-layers-str! s)
+  (let ((ls (world-parse-layers-str s)))
+    (set! *bg-layers* ls)
+    ; Pull params from first rain/dots/grid if present
+    (let loop ((xs ls))
+      (if (null? xs) #t
+        (let* ((L (car xs))
+               (k (if (pair? L) (car L) "")))
+          (cond
+            ((string=? k "rain")
+             (if (and (pair? (cdr L)) (string? (car (cdr L))))
+                 (world-set-rain-n! (world-num-or (car (cdr L)) 12))
+               #t))
+            ((or (string=? k "dots") (string=? k "petals"))
+             (if (and (pair? (cdr L)) (string? (car (cdr L))))
+                 (world-set-dot-step! (world-num-or (car (cdr L)) 3))
+               #t))
+            ((string=? k "grid")
+             (if (and (pair? (cdr L)) (string? (car (cdr L))))
+                 (set! *bg-grid-x* (world-num-or (car (cdr L)) 12))
+               #t)
+             (if (and (pair? (cdr L)) (pair? (cdr (cdr L)))
+                      (string? (car (cdr (cdr L)))))
+                 (set! *bg-grid-y* (world-num-or (car (cdr (cdr L))) 6))
+               #t))
+            (else #t))
+          (loop (cdr xs)))))
+    (set! *bg-rain-ready* #f)
+    (set! *world-ok* #t)
+    #t))
+
+; Serialize layers back to ops string.
+(define (world-layers-str)
+  (let loop ((xs *bg-layers*) (acc (world-empty)) (first #t))
+    (if (null? xs) acc
+      (let* ((L (car xs))
+             (chunk
+               (let loop2 ((ps L) (c (world-empty)) (f2 #t))
+                 (if (null? ps) c
+                   (loop2 (cdr ps)
+                          (if f2 (car ps)
+                            (string-append c "," (car ps)))
+                          #f)))))
+        (loop (cdr xs)
+              (if first chunk (string-append acc "|" chunk))
+              #f)))))
+
+; One-line recipe toast for /bg and speech.
+(define (world-recipe-summary)
+  (let ((ls (world-layers-str)))
+    (string-append
+      "bg=" *bg-style*
+      " rain=" (number->string *bg-rain-n*)
+      " layers="
+      (if (= (string-length ls) 0) "(default)" ls))))
 
 ; Short substring search (theme/style names only — keep n small).
 (define (world-has? s sub)
@@ -100,18 +254,26 @@
       ((or (string=? s "sunset") (string=? s "dusk")) "sunset")
       ((or (string=? s "meadow") (string=? s "park") (string=? s "grass"))
        "meadow")
+      ((or (string=? s "recipe") (string=? s "custom")) "recipe")
       (else s)))
-  ; Rain only for cyber/matrix; rebuild next draw if needed.
-  (if (or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
-      (set! *bg-rain-ready* #f)
-    (begin (set! *bg-rain* '()) (set! *bg-rain-ready* #t)))
+  ; Load default layer recipe for this preset (LLM can override via layers:)
+  (if (string=? *bg-style* "recipe")
+      (if (null? *bg-layers*)
+          (set! *bg-layers* (list (list "dots" "3") (list "stars")))
+        #t)
+    (world-load-default-layers!))
+  (set! *bg-rain-ready* #f)
   (set! *world-ok* #t)
   #t)
-(define (world-set-sky! c) (set! *w-sky* c) #t)
-(define (world-set-sky2! c) (set! *w-sky2* c) #t)
-(define (world-set-floor! c) (set! *w-floor* c) #t)
-(define (world-set-floor2! c) (set! *w-floor2* c) #t)
-(define (world-set-star! c) (set! *w-star* c) #t)
+(define (world-set-sky! c) (if (number? c) (set! *w-sky* c) #t) #t)
+(define (world-set-sky2! c) (if (number? c) (set! *w-sky2* c) #t) #t)
+(define (world-set-floor! c) (if (number? c) (set! *w-floor* c) #t) #t)
+(define (world-set-floor2! c) (if (number? c) (set! *w-floor2* c) #t) #t)
+(define (world-set-star! c)
+  (if (number? c)
+      (begin (set! *w-star* c) (set! *w-accent* c))
+    #t)
+  #t)
 (define (world-clear-npcs!) (set! *world-npcs* '()) #t)
 (define (world-clear-props!) (set! *world-props* '()) #t)
 ; Keep entity counts modest for TUI frame budget + eval stack safety.
@@ -281,55 +443,59 @@
       (catch (e) #f))))
 
 (define (world-to-file-text)
-  (let* ((s0 (string-append
-               "theme:" *world-theme* "\n"
-               "bg:" *bg-style* "\n"
-               "sky:" (world-rgb-str *w-sky*) "\n"
-               "sky2:" (world-rgb-str *w-sky2*) "\n"
-               "floor:" (world-rgb-str *w-floor*) "\n"
-               "floor2:" (world-rgb-str *w-floor2*) "\n"
-               "star:" (world-rgb-str *w-star*) "\n"))
-         (s0 (let loop ((xs *world-sprites*) (acc s0))
-               (if (null? xs) acc
-                 (loop (cdr xs)
-                       (string-append acc
-                         (world-sprite-to-line (car xs)) "\n")))))
-         (s1 (let loop ((xs *world-npcs*) (acc s0))
-               (if (null? xs) acc
-                 (let* ((n (car xs))
-                        (sprite (npc-sprite-name n))
-                        (line (string-append
-                                "npc:" (car n) "|"
-                                (number->string (car (cdr n))) "|"
-                                (number->string (car (cdr (cdr n)))) "|"
-                                (car (cdr (cdr (cdr n)))) "|"
-                                (car (cdr (cdr (cdr (cdr n)))))
-                                (if (and sprite (string? sprite)
-                                              (> (string-length sprite) 0))
-                                    (string-append "|" sprite "")
-                                    "")
-                                "\n")))
-                        (line (if (and sprite (string? sprite)
-                                       (> (string-length sprite) 0))
-                                  (string-append acc line)
-                                  (string-append acc line))))
-                   (loop (cdr xs) line)))))
-         (s2 (let loop ((xs *world-props*) (acc s1))
-               (if (null? xs) acc
-                 (let* ((p (car xs))
-                        (sprite (prop-sprite-name p))
-                        (line (string-append
-                                "prop:" (car p) "|"
-                                (number->string (car (cdr p))) "|"
-                                (number->string (car (cdr (cdr p))))
-                                (if (and sprite (string? sprite)
-                                              (> (string-length sprite) 0))
-                                    (string-append "|" sprite "")
-                                    "")
-                                "\n")))
-                        (line line))
-                   (loop (cdr xs) (string-append acc line))))))
-    s2))
+  (let* ((ls (world-layers-str))
+         (head (string-append
+                 "theme:" *world-theme* "\n"
+                 "bg:" *bg-style* "\n"
+                 "sky:" (world-rgb-str *w-sky*) "\n"
+                 "sky2:" (world-rgb-str *w-sky2*) "\n"
+                 "floor:" (world-rgb-str *w-floor*) "\n"
+                 "floor2:" (world-rgb-str *w-floor2*) "\n"
+                 "star:" (world-rgb-str *w-star*) "\n"
+                 "accent:" (world-rgb-str *w-accent*) "\n"
+                 "rain:" (number->string *bg-rain-n*) "\n"
+                 (if (> (string-length ls) 0)
+                     (string-append "layers:" ls "\n")
+                   (world-empty))))
+         (with-sprites
+           (let loop ((xs *world-sprites*) (acc head))
+             (if (null? xs) acc
+               (loop (cdr xs)
+                     (string-append acc
+                       (world-sprite-to-line (car xs)) "\n")))))
+         (with-npcs
+           (let loop ((xs *world-npcs*) (acc with-sprites))
+             (if (null? xs) acc
+               (let* ((n (car xs))
+                      (sprite (npc-sprite-name n))
+                      (line (string-append
+                              "npc:" (car n) "|"
+                              (number->string (car (cdr n))) "|"
+                              (number->string (car (cdr (cdr n)))) "|"
+                              (car (cdr (cdr (cdr n)))) "|"
+                              (car (cdr (cdr (cdr (cdr n)))))
+                              (if (and sprite (string? sprite)
+                                            (> (string-length sprite) 0))
+                                  (string-append "|" sprite)
+                                (world-empty))
+                              "\n")))
+                 (loop (cdr xs) (string-append acc line))))))
+         (with-props
+           (let loop ((xs *world-props*) (acc with-npcs))
+             (if (null? xs) acc
+               (let* ((p (car xs))
+                      (sprite (prop-sprite-name p))
+                      (line (string-append
+                              "prop:" (car p) "|"
+                              (number->string (car (cdr p))) "|"
+                              (number->string (car (cdr (cdr p))))
+                              (if (and sprite (string? sprite)
+                                            (> (string-length sprite) 0))
+                                  (string-append "|" sprite)
+                                (world-empty))
+                              "\n")))
+                 (loop (cdr xs) (string-append acc line)))))))
+    with-props))
 
 ; Emit Aura source rebinding world state (for set-code / AST hot update).
 (define (world-to-aura-source)
@@ -424,7 +590,6 @@
           (find1 (+ i 1)))))))
 (define (world-reset!)
   (set! *world-theme* "Sunset Meadow")
-  (world-set-bg-style! "sunset")
   ; Empty cast — the player's pet cat (mochi) is always drawn separately
   ; by draw-pixel-cat!, so the initial world is just a clean bg + the pet.
   ; NPCs/props appear when the player describes them (LLM) or via /world regen.
@@ -435,6 +600,10 @@
   (set! *w-floor* (world-rgb 55 110 65))
   (set! *w-floor2* (world-rgb 40 90 50))
   (set! *w-star* (world-rgb 255 220 160))
+  (set! *w-accent* (world-rgb 255 180 120))
+  (set! *bg-rain-n* 12)
+  (set! *bg-dot-step* 3)
+  (world-set-bg-style! "sunset")
   (set! *world-ok* #t)
   #t)
 
@@ -445,6 +614,8 @@
   (set! *w-floor* (world-rgb 10 15 30))
   (set! *w-floor2* (world-rgb 5 10 20))
   (set! *w-star* (world-rgb 0 255 120))
+  (set! *w-accent* (world-rgb 0 255 120))
+  (world-set-rain-n! 14)
   (world-set-bg-style! "cyber")
   #t)
 
@@ -532,16 +703,27 @@
               (if (and (>= n 7) (string=? (substring line 0 7) "floor2:"))
                   (begin (set! *w-floor2* (parse-rgb (substring line 7 n))) #t)
                 (if (and (>= n 5) (string=? (substring line 0 5) "star:"))
-                    (begin (set! *w-star* (parse-rgb (substring line 5 n))) #t)
-                  (if (and (>= n 3) (string=? (substring line 0 3) "bg:"))
-                      (begin (world-set-bg-style! (substring line 3 n)) #t)
-                    (if (and (>= n 4) (string=? (substring line 0 4) "npc:"))
-                        (let ((npc (world-parse-npc line)))
-                          (if npc (world-add-npc! npc) #f))
-                      (if (and (>= n 5) (string=? (substring line 0 5) "prop:"))
-                          (let ((pr (world-parse-prop line)))
-                            (if pr (world-add-prop! pr) #f))
-                        #f))))))))))))
+                    (begin (world-set-star! (parse-rgb (substring line 5 n))) #t)
+                  (if (and (>= n 7) (string=? (substring line 0 7) "accent:"))
+                      (begin (world-set-accent! (parse-rgb (substring line 7 n))) #t)
+                    (if (and (>= n 5) (string=? (substring line 0 5) "rain:"))
+                        (begin
+                          (world-set-rain-n!
+                            (world-num-or (substring line 5 n) 12))
+                          #t)
+                      (if (and (>= n 7) (string=? (substring line 0 7) "layers:"))
+                          (begin
+                            (world-set-layers-str! (substring line 7 n))
+                            #t)
+                        (if (and (>= n 3) (string=? (substring line 0 3) "bg:"))
+                            (begin (world-set-bg-style! (substring line 3 n)) #t)
+                          (if (and (>= n 4) (string=? (substring line 0 4) "npc:"))
+                              (let ((npc (world-parse-npc line)))
+                                (if npc (world-add-npc! npc) #f))
+                            (if (and (>= n 5) (string=? (substring line 0 5) "prop:"))
+                                (let ((pr (world-parse-prop line)))
+                                  (if pr (world-add-prop! pr) #f))
+                              #f)))))))))))))))
 
 ; Split file text by newlines and apply.
 ; IMPORTANT: use host (while) — named-let per character is NOT TCO'd in Aura
@@ -710,25 +892,42 @@
         (world-px (modulo 55 w) (+ y0 4) c sky)))
     #t))
 
-; Grass / flower dots only on floor rows (every 3rd cell).
+; Grass / flower dots on floor rows. step from *bg-dot-step*; accent for petals.
 (define (bg-draw-ground-dots! w fy y1 frame)
-  (set! *bg-y* fy)
-  (while (lambda () (< *bg-y* y1))
-         (lambda ()
-           (set! *bg-x* (modulo frame 3))
-           (while (lambda () (< *bg-x* w))
-                  (lambda ()
-                    (let ((n (modulo (+ (* *bg-x* 17) (* *bg-y* 31)) 11)))
-                      (if (= n 0)
-                          (world-px *bg-x* *bg-y*
-                                    (world-rgb 80 160 70) *w-floor2*)
-                        (if (= n 1)
-                            (world-px *bg-x* *bg-y*
-                                      (world-rgb 255 120 160)
-                                      (world-rgb 255 200 80))
-                          #t)))
-                    (set! *bg-x* (+ *bg-x* 3))))
-           (set! *bg-y* (+ *bg-y* 1)))))
+  (let ((step (if (< *bg-dot-step* 1) 3 *bg-dot-step*))
+        (petal *w-accent*)
+        (grass (world-rgb 80 160 70)))
+    (set! *bg-y* fy)
+    (while (lambda () (< *bg-y* y1))
+           (lambda ()
+             (set! *bg-x* (modulo frame step))
+             (while (lambda () (< *bg-x* w))
+                    (lambda ()
+                      (let ((n (modulo (+ (* *bg-x* 17) (* *bg-y* 31)) 11)))
+                        (if (= n 0)
+                            (world-px *bg-x* *bg-y* grass *w-floor2*)
+                          (if (= n 1)
+                              (world-px *bg-x* *bg-y* petal *w-star*)
+                            #t)))
+                      (set! *bg-x* (+ *bg-x* step))))
+             (set! *bg-y* (+ *bg-y* 1))))))
+
+; Dense petal scatter (snow/cherry) using accent color.
+(define (bg-draw-petals! w y0 y1 frame)
+  (let ((step (if (< *bg-dot-step* 1) 2 *bg-dot-step*))
+        (c *w-accent*)
+        (c2 *w-star*))
+    (set! *bg-y* y0)
+    (while (lambda () (< *bg-y* y1))
+           (lambda ()
+             (set! *bg-x* (modulo (+ frame *bg-y*) step))
+             (while (lambda () (< *bg-x* w))
+                    (lambda ()
+                      (if (= (modulo (+ *bg-x* (* *bg-y* 3) frame) 7) 0)
+                          (world-px *bg-x* *bg-y* c c2)
+                        #t)
+                      (set! *bg-x* (+ *bg-x* step))))
+             (set! *bg-y* (+ *bg-y* 1))))))
 
 ; Ocean wave band: only 2 rows, cheap x pattern.
 (define (bg-draw-waves! w y frame)
@@ -764,9 +963,13 @@
                       (set! *bg-y* (+ *bg-y* 1)))))
            (set! *bg-x* (+ *bg-x* 2)))))
 
-; Matrix rain — few drops only (cyber_cat uses ~28; we cap at 14).
+; Matrix rain — drop count from *bg-rain-n* (param / layers / LLM).
 (define (bg-rain-init! w y0 y1)
-  (let ((n (if (< w 50) 8 14)))
+  (let* ((want (if (and (number? *bg-rain-n*) (> *bg-rain-n* 0))
+                   *bg-rain-n* 12))
+         (n (if (< w 50)
+                (if (> want 10) 10 want)
+              (if (> want 24) 24 want))))
     (let loop ((i 0) (acc '()))
       (if (>= i n)
           (begin (set! *bg-rain* acc) (set! *bg-rain-ready* #t) #t)
@@ -799,9 +1002,9 @@
 (define (bg-rain-draw! frame)
   (let ((palette "01#$%&*+=<>/\\|")
         (plen 14)
-        (g1 (world-rgb 0 220 90))
-        (g0 (world-rgb 0 90 40))
-        (bgc (world-rgb 0 8 18)))
+        (g1 *w-accent*)
+        (g0 *w-star*)
+        (bgc *w-sky*))
     (let loop ((ds *bg-rain*))
       (if (null? ds) #t
         (let* ((d (car ds))
@@ -817,30 +1020,45 @@
             #t)
           (loop (cdr ds)))))))
 
-; Style → solid base colors (sky fill + floor band). Pattern is sparse overlay.
-(define (bg-base-sky)
-  (cond
-    ((or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
-     (world-rgb 0 8 18))
-    ((string=? *bg-style* "stars") (world-rgb 6 8 28))
-    ((string=? *bg-style* "ocean") (world-rgb 70 150 220))
-    ((string=? *bg-style* "city") (world-rgb 25 28 55))
-    ((string=? *bg-style* "grid") (world-rgb 5 12 22))
-    ((string=? *bg-style* "sunset") (world-rgb 90 45 70))
-    (else *w-sky*)))
+; Palette-driven base (LLM sky:/floor: always visible — Slice A).
+(define (bg-base-sky) *w-sky*)
+(define (bg-base-floor) *w-floor*)
 
-(define (bg-base-floor)
-  (cond
-    ((or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
-     (world-rgb 8 12 28))
-    ((string=? *bg-style* "stars") (world-rgb 16 18 36))
-    ((string=? *bg-style* "ocean") (world-rgb 200 180 120))
-    ((string=? *bg-style* "city") (world-rgb 28 28 38))
-    ((string=? *bg-style* "grid") (world-rgb 0 30 40))
-    (else *w-floor*)))
+; Draw one recipe layer (unknown kinds ignored).
+(define (bg-draw-layer! L w y0 y1 floor-y fr)
+  (let ((k (if (and (pair? L) (string? (car L))) (car L) "")))
+    (cond
+      ((string=? k "rain")
+       (begin
+         (if (not *bg-rain-ready*)
+             (bg-rain-init! w y0 floor-y)
+           #t)
+         (bg-rain-tick! w y0 floor-y)
+         (bg-rain-draw! fr)))
+      ((string=? k "grid")
+       (let ((sx (if (and (pair? (cdr L)) (string? (car (cdr L))))
+                     (world-num-or (car (cdr L)) *bg-grid-x*)
+                   *bg-grid-x*))
+             (sy (if (and (pair? (cdr L)) (pair? (cdr (cdr L)))
+                          (string? (car (cdr (cdr L)))))
+                     (world-num-or (car (cdr (cdr L))) *bg-grid-y*)
+                   *bg-grid-y*)))
+         (bg-vlines! w y0 floor-y (if (< sx 2) 8 sx) *w-accent*)
+         (bg-hlines! w y0 floor-y (if (< sy 2) 4 sy) *w-star*)))
+      ((string=? k "stars")
+       (bg-draw-stars! w y0 floor-y fr))
+      ((string=? k "waves")
+       (bg-draw-waves! w (- floor-y 2) fr))
+      ((string=? k "skyline")
+       (bg-draw-skyline! w floor-y fr))
+      ((string=? k "dots")
+       (bg-draw-ground-dots! w floor-y y1 fr))
+      ((or (string=? k "petals") (string=? k "snow") (string=? k "cherry"))
+       (bg-draw-petals! w y0 y1 fr))
+      (else #t))))
 
 ; Caller should (tui:clear (bg-base-sky) ...) first — sky is free in C++.
-; We only paint floor + sparse overlays (keeps play loop responsive).
+; Floor band + sparse recipe layers (keeps play loop responsive).
 (define (world-draw-bg! w h y0 y1 frame)
   (let ((floor-y (- y1 2))
         (rows (- y1 y0))
@@ -854,36 +1072,18 @@
         (set! *bg-floor-y* floor-y)
         (set! *bg-rows* rows)
         (set! *bg-frame* fr)
-        ; Floor only (2 rows) — not full-screen Scheme pixel loop
+        ; Floor only (2 rows)
         (bg-vband! w floor-y y1 (bg-base-floor))
-        ; Sparse overlays (O(w) or O(drops), not O(w*h) color math)
-        (cond
-          ((or (string=? *bg-style* "cyber") (string=? *bg-style* "matrix"))
-           (begin
-             ; few grid lines only (step large)
-             (bg-vlines! w y0 floor-y 12 (world-rgb 0 70 55))
-             (bg-hlines! w y0 floor-y 6 (world-rgb 0 45 40))
-             (if (not *bg-rain-ready*)
-                 (bg-rain-init! w y0 floor-y)
-               #t)
-             (bg-rain-tick! w y0 floor-y)
-             (bg-rain-draw! fr)))
-          ((string=? *bg-style* "grid")
-           (begin
-             (bg-vlines! w y0 y1 8 (world-rgb 0 80 100))
-             (bg-hlines! w y0 y1 4 (world-rgb 0 50 65))))
-          ((string=? *bg-style* "stars")
-           (bg-draw-stars! w y0 floor-y fr))
-          ((string=? *bg-style* "ocean")
-           (bg-draw-waves! w (- floor-y 2) fr))
-          ((string=? *bg-style* "city")
-           (bg-draw-skyline! w floor-y fr))
-          ((or (string=? *bg-style* "sunset") (string=? *bg-style* "meadow"))
-           (begin
-             (bg-draw-stars! w y0 floor-y fr)
-             (bg-draw-ground-dots! w floor-y y1 fr)))
-          (else
-           (bg-draw-ground-dots! w floor-y y1 fr)))
+        ; Ensure we have a recipe
+        (if (null? *bg-layers*)
+            (world-load-default-layers!)
+          #t)
+        ; Interpret layer list (O(layers * sparse work))
+        (let loop ((xs *bg-layers*))
+          (if (null? xs) #t
+            (begin
+              (bg-draw-layer! (car xs) w y0 y1 floor-y fr)
+              (loop (cdr xs)))))
         (world-draw-props!)
         #t))))
 

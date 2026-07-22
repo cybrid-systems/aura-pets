@@ -22,6 +22,11 @@ cd /path/to/aura-pets
 | **3** | Sleep + Zzz anim |
 | **Ctrl+D** (empty line) | Bye |
 | **Ctrl+C** twice | Bye (second press within ~2s) |
+| `/bg` | Scene recipe summary (palette + layers) |
+| `/bg cyber` | Preset (stars/ocean/city/sunset/meadow/grid) |
+| `/bg layers rain,16\|petals,2` | Custom sparse FX recipe |
+| `/bg accent 255,100,160` | Highlight / rain / petal tint |
+| `/bg rain 18` | Matrix-rain density (1–24) |
 | `/tutorial` | **Interactive guide** — browse commands & how-to |
 | `/tutorial care` | Jump topic: `basics` `care` `code` `fight` `world` `save` |
 | `/n` `/b` | Next / previous guide page |

@@ -377,63 +377,108 @@
        (set! *speech* "world")
        (cons #t pet))
 
-      ; ── background style (instant, no LLM) ──
+      ; ── background style / recipe (instant; LLM can also emit layers:) ──
+      ; /bg                  → recipe summary
+      ; /bg cyber            → preset + palette
+      ; /bg layers rain,16|petals,2
+      ; /bg accent 255,100,160
+      ; /bg rain 18
       ((or (string=? head "bg") (string=? head "background")
-           (string=? head "backdrop"))
+           (string=? head "backdrop") (string=? head "scene"))
        (if (= (string-length args) 0)
            (begin
              (set! *speech*
-               (string-append "bg=" (world-bg-style)
-                              " try: cyber stars ocean city sunset meadow grid"))
+               (try (world-recipe-summary)
+                    (catch (e)
+                      (string-append "bg=" (world-bg-style)
+                                     " try: cyber stars ocean | layers …"))))
              (set! *last-act* "bg")
              (cons #t pet))
-         (let ((st (cmd-downcase-ascii args)))
-           (if (or (string=? st "cyber") (string=? st "matrix")
-                   (string=? st "neon"))
-               (begin
-                 (world-apply-cyber-palette!)
-                 (set! *speech* "Cyber cat rain ON!")
-                 (set! *last-act* "bg")
-                 (cons #t pet))
-             (begin
-               (world-set-bg-style! st)
-               (cond
-                 ((string=? (world-bg-style) "stars")
-                  (world-set-sky! (world-rgb 4 6 24))
-                  (world-set-sky2! (world-rgb 12 10 40))
-                  (world-set-floor! (world-rgb 18 20 40))
-                  (world-set-floor2! (world-rgb 10 12 28))
-                  (world-set-star! (world-rgb 230 235 255)))
-                 ((string=? (world-bg-style) "ocean")
-                  (world-set-sky! (world-rgb 80 160 230))
-                  (world-set-sky2! (world-rgb 180 220 255))
-                  (world-set-floor! (world-rgb 200 180 120))
-                  (world-set-floor2! (world-rgb 170 150 100)))
-                 ((string=? (world-bg-style) "city")
-                  (world-set-sky! (world-rgb 20 25 50))
-                  (world-set-sky2! (world-rgb 60 40 70))
-                  (world-set-floor! (world-rgb 30 30 40))
-                  (world-set-floor2! (world-rgb 20 20 28)))
-                 ((string=? (world-bg-style) "sunset")
-                  (world-set-sky! (world-rgb 40 30 90))
-                  (world-set-sky2! (world-rgb 90 50 70))
-                  (world-set-floor! (world-rgb 55 110 65))
-                  (world-set-floor2! (world-rgb 40 90 50))
-                  (world-set-star! (world-rgb 255 220 160)))
-                 ((string=? (world-bg-style) "grid")
-                  (world-set-sky! (world-rgb 5 12 22))
-                  (world-set-sky2! (world-rgb 3 8 16))
-                  (world-set-floor! (world-rgb 0 40 55))
-                  (world-set-floor2! (world-rgb 0 20 30)))
-                 (else
-                  (world-set-sky! (world-rgb 30 50 90))
-                  (world-set-sky2! (world-rgb 45 70 110))
-                  (world-set-floor! (world-rgb 55 110 65))
-                  (world-set-floor2! (world-rgb 40 90 50))))
-               (set! *speech*
-                 (string-append "Background -> " (world-bg-style)))
-               (set! *last-act* "bg")
-               (cons #t pet))))))
+         (let* ((parts (cmd-split args))
+                (sub (cmd-downcase-ascii (car parts)))
+                (rest (cdr parts)))
+           (cond
+             ; /bg layers rain,12|dots,3|stars
+             ((or (string=? sub "layers") (string=? sub "layer")
+                  (string=? sub "recipe"))
+              (try (world-set-layers-str! rest) (catch (e) #f))
+              (set! *speech*
+                (try (world-recipe-summary)
+                     (catch (e) "layers set")))
+              (set! *last-act* "bg")
+              (cons #t pet))
+             ; /bg accent 255,100,160
+             ((or (string=? sub "accent") (string=? sub "tint"))
+              (try (world-set-accent! (parse-rgb rest)) (catch (e) #f))
+              (set! *speech*
+                (string-append "accent set · " (try (world-recipe-summary)
+                                                    (catch (e) "ok"))))
+              (set! *last-act* "bg")
+              (cons #t pet))
+             ; /bg rain 18
+             ((string=? sub "rain")
+              (try (world-set-rain-n! (world-num-or rest 12)) (catch (e) #f))
+              (set! *speech*
+                (string-append "rain=" (number->string
+                                         (try *bg-rain-n* (catch (e) 12)))))
+              (set! *last-act* "bg")
+              (cons #t pet))
+             ; presets
+             ((or (string=? sub "cyber") (string=? sub "matrix")
+                  (string=? sub "neon"))
+              (world-apply-cyber-palette!)
+              (set! *speech*
+                (string-append "Cyber rain ON! · "
+                               (try (world-recipe-summary) (catch (e) ""))))
+              (set! *last-act* "bg")
+              (cons #t pet))
+             (else
+              (world-set-bg-style! sub)
+              (cond
+                ((string=? (world-bg-style) "stars")
+                 (world-set-sky! (world-rgb 4 6 24))
+                 (world-set-sky2! (world-rgb 12 10 40))
+                 (world-set-floor! (world-rgb 18 20 40))
+                 (world-set-floor2! (world-rgb 10 12 28))
+                 (world-set-star! (world-rgb 230 235 255))
+                 (world-set-accent! (world-rgb 230 235 255)))
+                ((string=? (world-bg-style) "ocean")
+                 (world-set-sky! (world-rgb 80 160 230))
+                 (world-set-sky2! (world-rgb 180 220 255))
+                 (world-set-floor! (world-rgb 200 180 120))
+                 (world-set-floor2! (world-rgb 170 150 100))
+                 (world-set-accent! (world-rgb 40 120 200)))
+                ((string=? (world-bg-style) "city")
+                 (world-set-sky! (world-rgb 20 25 50))
+                 (world-set-sky2! (world-rgb 60 40 70))
+                 (world-set-floor! (world-rgb 30 30 40))
+                 (world-set-floor2! (world-rgb 20 20 28))
+                 (world-set-accent! (world-rgb 255 220 80)))
+                ((string=? (world-bg-style) "sunset")
+                 (world-set-sky! (world-rgb 40 30 90))
+                 (world-set-sky2! (world-rgb 90 50 70))
+                 (world-set-floor! (world-rgb 55 110 65))
+                 (world-set-floor2! (world-rgb 40 90 50))
+                 (world-set-star! (world-rgb 255 220 160))
+                 (world-set-accent! (world-rgb 255 160 120)))
+                ((string=? (world-bg-style) "grid")
+                 (world-set-sky! (world-rgb 5 12 22))
+                 (world-set-sky2! (world-rgb 3 8 16))
+                 (world-set-floor! (world-rgb 0 40 55))
+                 (world-set-floor2! (world-rgb 0 20 30))
+                 (world-set-accent! (world-rgb 0 200 180)))
+                (else
+                 (world-set-sky! (world-rgb 30 50 90))
+                 (world-set-sky2! (world-rgb 45 70 110))
+                 (world-set-floor! (world-rgb 55 110 65))
+                 (world-set-floor2! (world-rgb 40 90 50))
+                 (world-set-accent! (world-rgb 255 120 160))))
+              (set! *speech*
+                (try (world-recipe-summary)
+                     (catch (e)
+                       (string-append "Background -> " (world-bg-style)))))
+              (set! *last-act* "bg")
+              (cons #t pet))))))
 
       ; ── teach: /teach feed Hello ──
       ((string=? head "teach")
