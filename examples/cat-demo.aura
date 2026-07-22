@@ -301,22 +301,24 @@
   (game-on-move!)
   (cons (clamp-x (+ cat-x dx)) (clamp-y (+ cat-y dy))))
 
-; Fluid move: at most 1 step per frame (keys still update face).
-; Double-tap same arrow within 10 frames → 2-cell dash. No coast, no long CD.
-(define *moved-this-frame* #f)
+; Fluid move: up to *nav-budget* steps per frame so key-repeat feels snappy
+; when several arrow events land in one drain. Extra events only re-aim.
+; Double-tap same arrow within *dash-window* frames → 2-cell dash.
+(define *nav-budget* 0)
+(define *nav-max-per-frame* 4)
+(define *dash-window* 18)
 
 (define (nav-apply! dir dx dy)
   (battle-set-face! dir)
-  ; Extra keys this frame only re-aim (keeps turning snappy, no teleport).
-  (if *moved-this-frame*
+  (if (<= *nav-budget* 0)
       #t
     (let* ((same (and (string=? dir *dash-dir*)
                       (> *dash-frame* 0)
-                      (< (- *p-frame* *dash-frame*) 10)
+                      (< (- *p-frame* *dash-frame*) *dash-window*)
                       (> (- *p-frame* *dash-frame*) 0)))
            (step (if same 2 1))
            (xy (move-by *p-x* *p-y* (* dx step) (* dy step))))
-      (set! *moved-this-frame* #t)
+      (set! *nav-budget* (- *nav-budget* 1))
       (set! *dash-dir* dir)
       (set! *dash-frame* *p-frame*)
       (set! *p-x* (car xy))
@@ -336,19 +338,18 @@
       #t)))
 
 ; Input first, non-blocking drain, short wait only after empty queue.
-; (Long timeout after a slow frame made keys feel dead.)
 (define (play-drain-input!)
-  (set! *moved-this-frame* #f)
-  ; Drain whatever is already pending (no sleep).
+  (set! *nav-budget* *nav-max-per-frame*)
+  ; Drain pending keys (no sleep) — catch up after a heavy draw frame.
   (let loop ((n 0))
-    (if (>= n 12)
+    (if (>= n 24)
         #t
       (let ((e (tui:read-event 0)))
         (if e
             (begin (play-handle-event! e) (loop (+ n 1)))
           #t))))
-  ; Brief block so idle loop is not a hot spin (~8ms).
-  (play-handle-event! (tui:read-event 8)))
+  ; Short block so idle is not a hot spin (~2ms; was 8ms and felt laggy).
+  (play-handle-event! (tui:read-event 2)))
 
 ; Demo frame state (host while — no named-let recursion).
 (define *d-i* 0)
@@ -428,13 +429,15 @@
 (define *p-running* #t)
 (define *p-tick* 0)
 (define *p-quit* "unknown")
+; Soft vitals interval in frames (~1.5s at ~60fps)
+(define *p-soft-every* 90)
 ; Double-tap dash: last nav dir + frame
 (define *dash-dir* "")
 (define *dash-frame* -99)
 ; Double Ctrl+C: engine emits ("quit" . _) on each C-c. First arms; second
-; within ~2s (50 frames @ ~25fps) exits. Ctrl+D (empty prompt) quits once.
+; within ~2s (~100 frames @ ~50fps) exits. Ctrl+D (empty prompt) quits once.
 (define *ctrl-c-arm-frame* -999)
-(define *ctrl-c-window* 50)
+(define *ctrl-c-window* 100)
 
 (define (evt-tag e)
   (if (and (pair? e) (string? (car e))) (car e) "none"))
@@ -585,7 +588,9 @@
   (draw-scene! *p-pet* *p-frame* *p-x* *p-y*)
   (set! *p-frame* (+ *p-frame* 1))
   (set! *p-tick* (+ *p-tick* 1))
-  (if (and *p-running* (= (modulo *p-tick* 45) 0))
+  (if (and *p-running*
+           (> *p-soft-every* 0)
+           (= (modulo *p-tick* *p-soft-every*) 0))
       (begin
         (set! *p-pet* (game-soft-tick *p-pet*))
         ; Surface self-evolution toast on the prompt status line.
@@ -656,10 +661,14 @@
           (prompt-set-log! (game-speech))))))
   (plog "ready" "entering-play-loop")
   (plog-flush!)
-  ; Frame cap to calm flicker on terminal TUI. Aura has no tui:sleep
-  ; primitive, so we shell-sleep. ~10ms fork+exec + 30ms = ~25fps.
-  ; Anqi can bump *p-frame-sleep* up if it still feels too chaotic.
-  (define *p-frame-sleep* "0.030")
+  ; Frame pacing. Aura has no tui:sleep — shell sleep has ~few-ms fork cost.
+  ; 0.008 target ~50–60fps wall when draw is light (was 0.030 ≈ 25fps, laggy).
+  ; Override: AURA_PETS_FRAME_SLEEP=0.016 for calmer terminals.
+  (define *p-frame-sleep*
+    (try
+      (let ((e (getenv "AURA_PETS_FRAME_SLEEP")))
+        (if (and (string? e) (> (string-length e) 0)) e "0.008"))
+      (catch (e) "0.008")))
   ; Host (while pred body) runs in C++ — no Scheme stack growth per frame.
   (while (lambda () *p-running*)
          (lambda ()
