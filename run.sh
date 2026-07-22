@@ -50,6 +50,7 @@ Aura Pets
   ./run.sh                 play on TTY, else demo
   ./run.sh play            interactive
   ./run.sh --demo [N]      headless frames
+  ./run.sh --cyber [N]     3D cyber cat stage (headless frames)
   ./run.sh smoke
   ./run.sh play --log FILE debug log path (default /tmp/aura-pets-debug.log)
 
@@ -80,6 +81,10 @@ USAGE
     --frames) MODE="demo"; FRAMES="$2"; shift 2 || shift ;;
     --loop) MODE="demo"; FRAMES=99999; shift ;;
     smoke) EXAMPLE="examples/smoke.aura"; MODE="smoke"; shift ;;
+    --cyber)
+      MODE="cyber"
+      if [ -n "${2:-}" ] && [ "${2#-}" = "$2" ]; then FRAMES="$2"; shift 2; else shift; fi
+      ;;
     --example) EXAMPLE="$2"; shift 2 || shift ;;
     *) echo "Unknown: $1" >&2; exit 1 ;;
   esac
@@ -102,6 +107,12 @@ case "$MODE" in
     ;;
   demo)
     EXPR="(begin $LOAD_CORE (load \"$SCRIPT_DIR/$EXAMPLE\") (load \"$SCRIPT_DIR/lib/tui-prompt.aura\") (cat-demo-anim $FRAMES))"
+    ;;
+  cyber)
+    # 3D voxel scene — voxel-render + cyber-cat-scene + entry.
+    EXAMPLE="examples/cyber-cat-stage.aura"
+    LOAD_STAGE="(load \"$SCRIPT_DIR/lib/voxel-render.aura\") (load \"$SCRIPT_DIR/lib/cyber-cat-scene.aura\")"
+    EXPR="(begin $LOAD_STAGE (load \"$SCRIPT_DIR/$EXAMPLE\") (cyber-cat-stage-anim $FRAMES))"
     ;;
 esac
 

@@ -1,0 +1,94 @@
+; lib/voxel-render.aura — minimal isometric voxel renderer for Aura TUI.
+;
+; Voxel = (x y z r g b) — 6-element list.
+; Camera looks from upper-right at 30° elevation (standard iso).
+; Each voxel renders as one full-block tui:cell at iso-projected (sx, sy).
+; Painter's algorithm: sort back-to-front before drawing.
+;
+; Public:
+;   (vr-init! screen-w screen-h cam-x cam-y)
+;   (vr-clear! r g b)
+;   (vr-render! voxels)        — sort + draw all
+;   (vr-frame! bg-r bg-g bg-b voxels) — clear + render + present
+
+(define *vr-w* 80)
+(define *vr-h* 24)
+(define *vr-cam-x* 36)
+(define *vr-cam-y* 6)
+
+(define (vr-init! w h cx cy)
+  (set! *vr-w* (if (number? w) w 80))
+  (set! *vr-h* (if (number? h) h 24))
+  (set! *vr-cam-x* (if (number? cx) cx 36))
+  (set! *vr-cam-y* (if (number? cy) cy 6))
+  #t)
+
+(define (vr-screen-w) *vr-w*)
+(define (vr-screen-h) *vr-h*)
+
+; Pack r,g,b into a single RGB int (same layout as canvas rgb).
+(define (vr-rgb r g b) (+ (* r 65536) (* g 256) b))
+
+; Isometric projection.
+;   sx = (x - z) + cam_x
+;   sy = ((x + z) - 2*y) / 2 + cam_y
+; Higher y → higher on screen (up). Higher x → right. Higher z → left.
+; `quotient` (Scheme std) is integer division rounded toward zero — no
+; float/rational intermediate, no need for truncate/floor.
+(define (vr-proj x y z)
+  (let ((sx (+ (- x z) *vr-cam-x*))
+        (sy (+ (quotient (- (+ x z) (* 2 y)) 2) *vr-cam-y*)))
+    (cons sx sy)))
+
+; Painter depth: smaller = back (drawn first), larger = front (drawn last).
+; x and z contribute positively (both extend into scene); y contributes
+; negatively (taller objects sit in front). Within same x+z, taller y last.
+(define (vr-depth v)
+  (let ((x (car v))
+        (y (car (cdr v)))
+        (z (car (cdr (cdr v)))))
+    (+ (- x z) (* 2 (- y)))  ; tweakable; primary order: front-of-screen first
+
+    ))
+
+; Sort voxels back-to-front (smaller depth first).
+; Painter order is maintained by the SCENE composer (ccs-scene) — it builds
+; the voxel list in back-to-front order, so we skip sorting here. Insertion
+; sort with append/reverse blows the stack on ~300 voxels; manual ordering
+; is also more predictable for layered scenes.
+(define (vr-sort voxels) voxels)
+
+; Draw one voxel as a full-block character with the voxel's color.
+; Skip if outside screen bounds.
+(define (vr-draw-voxel! v)
+  (let* ((x (car v))
+         (y (car (cdr v)))
+         (z (car (cdr (cdr v))))
+         (r (car (cdr (cdr (cdr v)))))
+         (g (car (cdr (cdr (cdr (cdr v))))))
+         (b (car (cdr (cdr (cdr (cdr (cdr v)))))))
+         (p (vr-proj x y z))
+         (sx (car p))
+         (sy (cdr p))
+         (color (vr-rgb r g b)))
+    (if (and (>= sx 0) (< sx *vr-w*) (>= sy 0) (< sy *vr-h*))
+        (tui:cell sx sy "█" color 0)
+      #t)))
+
+; Render scene: sort + draw all voxels in order.
+(define (vr-render! voxels)
+  (let loop ((xs (vr-sort voxels)))
+    (if (null? xs) #t
+      (begin
+        (vr-draw-voxel! (car xs))
+        (loop (cdr xs))))))
+
+; One full frame: clear background + render scene + present.
+(define (vr-frame! bg-r bg-g bg-b voxels)
+  (tui:clear (vr-rgb bg-r bg-g bg-b) (vr-rgb bg-r bg-g bg-b))
+  (vr-render! voxels)
+  (tui:present))
+
+; Public helper: world-to-screen projection for HUD/debug overlay.
+(define (vr-world-to-screen x y z)
+  (vr-proj x y z))

@@ -1,0 +1,164 @@
+; lib/cyber-cat-scene.aura — voxel data for the 3D Cyber Cat stage.
+;
+; All voxels are (x y z r g b). Iso projection lives in voxel-render.aura.
+; Scene = platform (static) + cat (animated per frame) + buildings (static)
+; + sparse matrix rain (animated).
+;
+; World coords: x grows right (down-right in iso), y grows up, z grows back
+; (down-left in iso). Cat sits on platform around (4-8, 0-7, 2-4).
+
+; ─── Palette (RGB triples) ───
+(define CCS-C-SKY       '(12 16 32))
+(define CCS-C-PLAT      '(18 22 38))
+(define CCS-C-PLAT-EDGE '(0 200 255))
+(define CCS-C-CAT       '(45 50 70))
+(define CCS-C-CAT-EDGE  '(0 220 255))
+(define CCS-C-EYE       '(255 60 210))
+(define CCS-C-EYE-DIM   '(120 20 90))
+(define CCS-C-ANTENNA   '(0 255 220))
+(define CCS-C-ANTENNA-DIM '(0 90 80))
+(define CCS-C-BLDG      '(20 24 38))
+(define CCS-C-BLDG-NEON '(0 140 200))
+(define CCS-C-RAIN      '(0 255 120))
+
+; ─── Voxel constructor ───
+(define (vx x y z rgb) (list x y z (car rgb) (car (cdr rgb)) (car (cdr (cdr rgb)))))
+
+; Fill a box with one color (inclusive bounds).
+(define (fill-box x0 x1 y0 y1 z0 z1 rgb)
+  (let ((acc '()))
+    (let lx ((x x0))
+      (if (> x x1) acc
+        (let ly ((y y0))
+          (if (> y y1) (lx (+ x 1))
+            (let lz ((z z0))
+              (if (> z z1) (ly (+ y 1))
+                (begin
+                  (set! acc (cons (vx x y z rgb) acc))
+                  (lz (+ z 1)))))))))))
+
+; ─── Platform: 10×1×10 with cyan edge ring ───
+; Reduced from 16×16 (~384 voxels) to keep render loop under Aura's ~700
+; recursion limit — named-let is not tail-call optimised.
+(define (ccs-platform)
+  (let ((base (fill-box 0 9 0 0 0 9 CCS-C-PLAT))
+        (edge-x0 (fill-box 0 0 0 1 0 9 CCS-C-PLAT-EDGE))
+        (edge-x1 (fill-box 9 9 0 1 0 9 CCS-C-PLAT-EDGE))
+        (edge-z0 (fill-box 0 9 0 1 0 0 CCS-C-PLAT-EDGE))
+        (edge-z1 (fill-box 0 9 0 1 9 9 CCS-C-PLAT-EDGE)))
+    (append base edge-x0 edge-x1 edge-z0 edge-z1)))
+
+; ─── Cat — static body parts ───
+; Sitting cat facing +x (right). Layered box geometry; the "magic" lives in
+; which voxels are present (i.e. its code) — evolve by mutating this list.
+(define (ccs-cat-body)
+  (append
+    ; Hindquarters / back
+    (fill-box 2 4 2 4 2 4 CCS-C-CAT)
+    ; Mid-body
+    (fill-box 3 5 2 3 2 3 CCS-C-CAT)
+    ; Front legs (vertical column on front)
+    (fill-box 5 5 1 2 2 3 CCS-C-CAT)
+    ; Chest / shoulder
+    (fill-box 5 6 3 4 2 3 CCS-C-CAT)
+    ; Neck
+    (fill-box 6 6 5 5 2 3 CCS-C-CAT)
+    ; Head (cube)
+    (fill-box 6 8 6 7 2 3 CCS-C-CAT)
+    ; Ears (two corner voxels, neon edge)
+    (list (vx 6 8 2 CCS-C-CAT-EDGE)
+          (vx 8 8 3 CCS-C-CAT-EDGE))
+    ; Cheek/jaw underline (one voxel, neon edge)
+    (list (vx 7 6 2 CCS-C-CAT-EDGE))))
+
+; Animated tail — sways left↔right with frame.
+; Tail voxels: (x y z) at base + sway-modulated offsets.
+(define (ccs-cat-tail frame)
+  (let* ((sway (modulo frame 24))
+         (dx (cond ((< sway 6) 0)
+                   ((< sway 12) -1)
+                   ((< sway 18) 0)
+                   (else 1)))
+         (dy (cond ((< sway 6) 0)
+                   ((< sway 12) 1)
+                   ((< sway 18) 0)
+                   (else 0)))
+         (base '((1 3 3) (2 3 3) (2 4 3) (3 4 3))))
+    (let loop ((xs base) (acc '()))
+      (if (null? xs) acc
+        (let* ((p (car xs))
+               (x (+ (car p) dx))
+               (y (+ (car (cdr p)) dy))
+               (z (car (cdr (cdr p)))))
+          (loop (cdr xs)
+                (cons (vx x y z
+                          (if (and (= (car p) 3) (= (car (cdr p)) 4))
+                              CCS-C-CAT-EDGE
+                              CCS-C-CAT))
+                      acc)))))))
+
+; Eyes — 2 voxels at head front, magenta. Pulse with frame.
+(define (ccs-cat-eyes frame)
+  (let ((on? (< (modulo frame 16) 12)))
+    (if on?
+        (list (vx 7 7 2 CCS-C-EYE)
+              (vx 8 7 2 CCS-C-EYE))
+        (list (vx 7 7 2 CCS-C-EYE-DIM)
+              (vx 8 7 2 CCS-C-EYE-DIM)))))
+
+; Antenna — tip blinks every 30 frames. Base always present.
+(define (ccs-cat-antenna frame)
+  (let ((blink? (not (= 0 (modulo frame 30)))))
+    (append
+      (list (vx 7 9 2 CCS-C-CAT-EDGE))
+      (if blink?
+          (list (vx 7 10 2 CCS-C-ANTENNA))
+          (list (vx 7 10 2 CCS-C-ANTENNA-DIM))))))
+
+; Full cat voxels (animated) for one frame.
+(define (ccs-cat frame)
+  (append (ccs-cat-body)
+          (ccs-cat-tail frame)
+          (ccs-cat-eyes frame)
+          (ccs-cat-antenna frame)))
+
+; ─── Background buildings (2 distant cyber towers) ───
+; Reduced from 4 to keep voxel count manageable.
+(define (ccs-buildings)
+  (append
+    ; Tower L (left, shorter)
+    (fill-box -10 -8 1 7 14 16 CCS-C-BLDG)
+    (list (vx -9 8 15 CCS-C-BLDG-NEON))
+    ; Tower R (right, taller)
+    (fill-box 16 18 1 10 13 15 CCS-C-BLDG)
+    (list (vx 17 11 14 CCS-C-BLDG-NEON))))
+
+; ─── Matrix rain (background ASCII drops) ───
+; 8 columns at deterministic x positions, scrolling down per frame.
+(define *ccs-rain-cols* '((-30 5) (-25 12) (-18 2) (-12 18)
+                          (28 7) (33 14) (24 22) (15 9)))
+
+(define (ccs-rain frame)
+  (let loop ((xs *ccs-rain-cols*) (i 0) (acc '()))
+    (if (null? xs) acc
+      (let* ((p (car xs))
+             (x (car p))
+             (base-y (car (cdr p)))
+             (y (modulo (+ base-y (* 3 frame) (* i 7)) 24))
+             (z (+ 25 (* 7 (modulo i 4)))))
+        (loop (cdr xs) (+ i 1)
+              (cons (vx x y z CCS-C-RAIN) acc))))))
+
+; ─── Full scene composer ───
+; Painter order (back → front). vr-sort is a no-op (skip append-stack blowup
+; on ~700 voxels), so the scene list must be in correct draw order:
+;   1. matrix rain       (high z, far back)
+;   2. distant buildings (mid-back)
+;   3. platform          (front of cat)
+;   4. cat               (on top of platform)
+; Nested 2-arg append keeps stack flat.
+(define (ccs-scene frame)
+  (append (ccs-rain frame)
+          (append (ccs-buildings)
+                  (append (ccs-platform)
+                          (ccs-cat frame)))))

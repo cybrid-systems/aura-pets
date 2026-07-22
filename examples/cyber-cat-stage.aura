@@ -1,0 +1,41 @@
+; examples/cyber-cat-stage.aura — 3D Cyber Cat Stage demo.
+;
+; First 3D scene for aura-pets. Cat sits on a neon-edged platform in front
+; of distant cyber towers with matrix rain. The cat's voxel data IS its code
+; — when it evolves, we'll mutate ccs-cat-body / -tail / -eyes / -antenna.
+;
+; Load order: voxel-render → cyber-cat-scene → this file.
+
+(require "std/tui/sprite" all:)
+(require "std/tui/canvas" all:)
+
+(define W 80)
+(define H 24)
+
+(define (cyber-cat-stage-anim n)
+  (tui:init "aura-pets Cyber Cat Stage" W H #f)
+  (tui:hide-cursor)
+  ; Camera offset tuned so the platform rhombus fills the centre.
+  (vr-init! W H 38 4)
+
+  (let loop ((frame 0))
+    (if (>= frame n)
+        (begin (tui:show-cursor) (tui:shutdown) "DONE")
+      (begin
+        ; Render one frame: sky bg + scene voxels (painter-sorted).
+        (vr-frame! 12 16 32 (ccs-scene frame))
+        ; HUD line: frame # + theme + voxel count (sanity).
+        (display "\n=== Frame ")
+        (display (number->string frame))
+        (display " cyber-cat-stage W=")
+        (display (number->string W))
+        (display "x")
+        (display (number->string H))
+        (display " voxels=")
+        (display (number->string (length (ccs-scene frame))))
+        (display " ===\n")
+        (display (tui:frame-ansi))
+        (newline)
+        (loop (+ frame 1))))))
+
+(cyber-cat-stage-anim 6)
