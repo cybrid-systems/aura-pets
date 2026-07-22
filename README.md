@@ -64,8 +64,8 @@ Default `./run.sh play` starts **new** with a short tip: type **`/tutorial`** fo
 
 | Mode | Feel |
 |------|------|
-| **NORMAL** (default) | Prompt **hidden** — full game; arrows / 1 2 3 / Space |
-| **INSERT** | Prompt **box** — type `/cmds` and free text |
+| **NORMAL** (default) | Prompt **hidden** — arrows move; **1 2 3** care; **Space** fire |
+| **INSERT** | Prompt **box** — pure typing (1/2/3/Space are characters, not hotkeys) |
 
 | Key | Action |
 |-----|--------|

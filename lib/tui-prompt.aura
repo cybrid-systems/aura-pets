@@ -13,8 +13,9 @@
 ;   - UTF-8 codepoint-aware cursor
 ;
 ; Modes:
-;   NORMAL — full game; arrows/1/2/3/Space; no input box
-;   INSERT — Grok-style box; type commands; Esc back to NORMAL
+;   NORMAL — full game; arrows + 1/2/3 care + Space fire; no input box
+;   INSERT — Grok-style box; pure typing (1/2/3/Space are characters);
+;            Esc back to NORMAL
 ;
 ; Emacs map (INSERT):
 ;   C-a beginning   C-e end
@@ -700,7 +701,8 @@
       (string=? ch "Esc")
       (string=? ch "ESC")))
 
-; Empty-line hotkeys: care digits + Space fire (tank mode).
+; Game hotkeys (NORMAL only): care digits + Space fire.
+; INSERT never treats these as hot — they type into the buffer.
 (define (prompt-is-hot? ch)
   (or (string=? ch "1") (string=? ch "2") (string=? ch "3")
       (string=? ch " ") (string=? ch "Space")))
@@ -722,11 +724,12 @@
     ((string=? ch ":")
      (prompt-enter-insert-cmd!)
      "mode")
-    ; Fullscreen game nav — always (no empty-buf gate)
+    ; Fullscreen game nav — always
     ((prompt-is-left? ch) "nav-left")
     ((prompt-is-right? ch) "nav-right")
     ((prompt-is-up? ch) "nav-up")
     ((prompt-is-down? ch) "nav-down")
+    ; 1/2/3 care + Space fire — NORMAL only
     ((prompt-is-hot? ch)
      (set! *prompt-hot* (prompt-hot-cmd ch))
      "hot")
@@ -736,7 +739,8 @@
      "quit")
     (else #f)))
 
-; INSERT mode: line editor + Esc → NORMAL.
+; INSERT mode: pure line editor + Esc → NORMAL.
+; 1/2/3/Space type as characters (no care/fire hotkeys).
 (define (prompt-handle-insert ch)
   (let ((empty? (= (string-length *prompt-buf*) 0))
         (slash? (and (> (string-length *prompt-buf*) 0)
@@ -774,6 +778,7 @@
       ((prompt-is-del-fwd? ch)
        (prompt-delete-fwd!)
        "edit")
+      ; Empty INSERT: arrows still move pet (game feel while typing idle)
       ((and empty? (not hist-browse?) (prompt-is-left? ch)) "nav-left")
       ((and empty? (not hist-browse?) (prompt-is-right? ch)) "nav-right")
       ((and empty? (not hist-browse?) (prompt-is-up? ch)) "nav-up")
@@ -803,9 +808,10 @@
       ((and (not *prompt-no-q-quit?*) empty?
             (or (string=? ch "q") (string=? ch "Q")))
        "quit")
-      ((and empty? (prompt-is-hot? ch))
-       (set! *prompt-hot* (prompt-hot-cmd ch))
-       "hot")
+      ; Space as "Space" name → insert a real space character
+      ((string=? ch "Space")
+       (prompt-insert! " ")
+       "edit")
       ((prompt-printable? ch)
        (prompt-insert! ch)
        "edit")
