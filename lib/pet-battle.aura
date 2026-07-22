@@ -179,10 +179,17 @@
       (draw-text (+ bx 1 w) row "]" (rgb 120 120 140) 0)
       #t)))
 
-; Compact mini bar for NPCs (no label): width 6
-(define (draw-npc-hp-bar! col row cur maxn)
-  (draw-hp-bar! col row cur maxn 6 (battle-empty))
-  #t)
+; Compact NPC life — no [####] chrome (was ugly / empty-string glitchy).
+; Only draw when hurt; plain "3/8" in soft red/yellow.
+(define (draw-npc-life! col row cur maxn)
+  (if (or (not (number? cur)) (not (number? maxn)) (<= maxn 0)
+          (>= cur maxn))
+      #t
+    (let* ((fg (hp-bar-color cur maxn))
+           (txt (string-append
+                  (number->string cur) "/" (number->string maxn))))
+      (draw-text col row txt fg 0)
+      #t)))
 
 ; ── FX ──
 (define (fx-spawn! x y text life)
@@ -655,6 +662,14 @@
 
 ; Draw NPC HP bars + flash/death tint helpers for world-draw path.
 ; Call after world-draw-npcs or integrate.
+; NPC floating chrome: only enemies (and hurt friends). No bars on decor.
+(define (battle-npc-show-life? kind)
+  (or (string=? kind "enemy")
+      (string=? kind "foe")
+      (string=? kind "mob")
+      (string=? kind "boss")
+      (string=? kind "friend")))
+
 (define (battle-draw-npc-hud! frame)
   (let loop ((xs *world-npcs*))
     (if (null? xs) #t
@@ -667,18 +682,16 @@
              (mx (combat-npc-max kind))
              (dying (npc-dying? name))
              (flash (> (npc-flash-get name) 0))
-             ; decor props (plane/star props-as-npc) — no combat chrome
-             (decor? (or (string=? kind "decor") (string=? kind "prop")
-                         (string=? kind "scenery"))))
+             (show? (battle-npc-show-life? kind)))
         (cond
           (dying
            (draw-text x y "..." (rgb 255 80 80) 0))
-          (decor? #t)
+          ((not show?) #t)
           (else
            (begin
-             ; keep bars inside the scene (never on HUD rows 0-1)
-             (if (> (- y 1) 1)
-                 (draw-npc-hp-bar! x (- y 1) hp mx)
+             ; life digits above head; never on HUD rows 0-1
+             (if (and (> (- y 1) 1) (< hp mx))
+                 (draw-npc-life! x (- y 1) hp mx)
                #t)
              (if flash
                  (draw-text (+ x 4) y "!" (rgb 255 255 0) 0)
